@@ -879,4 +879,171 @@ async function maybeAskPush() {
   toast('Get reminder notifications on this device?', 'Enable', () => enablePush().catch(fail));
 }
 
+// ---------------- long-press / right-click menus ----------------
+// Long press (touch) or right-click (mouse) on a to-do or a list opens a menu.
+// Android fires `contextmenu` on long press; iOS doesn't, so a pointer timer covers it.
+const LONG_PRESS_MS = 480;
+let pressTimer = null, pressStart = null, suppressClickUntil = 0, menuOpenedAt = 0;
+
+function menuTargetFrom(el) {
+  const task = el.closest?.('.task');
+  if (task) return { kind: 'task', id: Number(task.dataset.id), el: task };
+  const item = el.closest?.('.list-item');
+  if (item?.dataset.key?.startsWith('list:')) return { kind: 'list', id: Number(item.dataset.key.slice(5)), el: item };
+  return null;
+}
+function openMenuFor(target, x, y) {
+  if (Date.now() - menuOpenedAt < 700) return; // contextmenu + timer can both fire
+  menuOpenedAt = Date.now();
+  const items = target.kind === 'task' ? taskMenuItems(target.id) : listMenuItems(target.id);
+  if (!items.length) return;
+  const title = target.kind === 'task' ? taskById(target.id)?.title : listById(target.id)?.name;
+  navigator.vibrate?.(12);
+  target.el.classList.add('pressed');
+  showMenu(items, x, y, () => target.el.classList.remove('pressed'), title);
+}
+
+document.addEventListener('contextmenu', (e) => {
+  const t = menuTargetFrom(e.target);
+  if (!t || e.target.closest('input, textarea')) return;
+  e.preventDefault();
+  clearTimeout(pressTimer);
+  if (pressStart) suppressClickUntil = Date.now() + 800; // touch long press: a click may follow on lift
+  openMenuFor(t, e.clientX, e.clientY);
+});
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse') return; // mouse uses right-click
+  const t = menuTargetFrom(e.target);
+  if (!t) return;
+  pressStart = { x: e.clientX, y: e.clientY };
+  clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => {
+    suppressClickUntil = Date.now() + 800;
+    openMenuFor(t, pressStart.x, pressStart.y);
+  }, LONG_PRESS_MS);
+}, { passive: true });
+document.addEventListener('pointermove', (e) => {
+  if (pressStart && Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > 10) clearTimeout(pressTimer);
+}, { passive: true });
+for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, () => {
+  clearTimeout(pressTimer); pressStart = null;
+  // The click (if any) follows pointerup immediately; don't keep eating taps after that.
+  if (suppressClickUntil > Date.now()) setTimeout(() => { suppressClickUntil = 0; }, 60);
+}, { passive: true });
+document.addEventListener('scroll', () => clearTimeout(pressTimer), { capture: true, passive: true });
+// Swallow the click that follows lifting a finger after a long press, so it neither
+// opens/toggles the item underneath nor hits the menu that just appeared under the finger.
+document.addEventListener('click', (e) => {
+  if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); suppressClickUntil = 0; }
+}, true);
+
+function taskMenuItems(id) {
+  const t = taskById(id);
+  if (!t) return [];
+  const list = listById(t.list_id);
+  const today = localToday();
+  const plusDays = (n) => { const d = parseDate(today); d.setDate(d.getDate() + n); return dateStr(d); };
+  const nextMonday = (() => { const d = parseDate(today); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); return dateStr(d); })();
+  const at = (days, h, m = 0) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, m, 0, 0); return d; };
+  const timeLabel = (d) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const setRemind = async (d) => { await updateTask(id, { remind_at: d ? d.toISOString() : null }); if (d) { toast(`Reminder set for ${d.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`); maybeAskPush(); } };
+  const pick = (field) => { openDetail(id); const el = $(field); try { el.showPicker(); } catch { el.focus(); } };
+
+  const items = [
+    { icon: 'check', label: t.completed ? 'Mark as not done' : 'Mark as done', run: () => toggleTask(id) },
+    { icon: 'star', label: t.starred ? 'Unstar' : 'Star', run: () => updateTask(id, { starred: !t.starred }) },
+  ];
+  if (!t.completed) {
+    items.push({ icon: 'calendar', label: 'Due date', hint: t.due_date ? dueLabel(t.due_date) : '', sub: () => [
+      { icon: 'calendar-check', label: 'Today', checked: t.due_date === today, run: () => updateTask(id, { due_date: today }) },
+      { icon: 'calendar', label: 'Tomorrow', checked: t.due_date === plusDays(1), run: () => updateTask(id, { due_date: plusDays(1) }) },
+      { icon: 'calendar-days', label: `Next week (${dueLabel(nextMonday)})`, checked: t.due_date === nextMonday, run: () => updateTask(id, { due_date: nextMonday }) },
+      { icon: 'pencil', label: 'Pick a date…', run: () => pick('#d-due') },
+      ...(t.due_date ? [{ icon: 'x', label: 'Remove due date', run: () => updateTask(id, { due_date: null }) }] : []),
+    ] });
+    items.push({ icon: 'bell', label: 'Remind me', hint: t.remind_at && !t.reminded ? new Date(t.remind_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '', sub: () => {
+      const inHour = new Date(Math.ceil((Date.now() + 3600000) / 300000) * 300000);
+      const opts = [{ icon: 'bell', label: `In 1 hour (${timeLabel(inHour)})`, run: () => setRemind(inHour) }];
+      if (new Date().getHours() < 17) opts.push({ icon: 'bell', label: `This evening (${timeLabel(at(0, 18))})`, run: () => setRemind(at(0, 18)) });
+      opts.push({ icon: 'bell', label: `Tomorrow morning (${timeLabel(at(1, 9))})`, run: () => setRemind(at(1, 9)) });
+      opts.push({ icon: 'pencil', label: 'Pick a time…', run: () => pick('#d-remind') });
+      if (t.remind_at) opts.push({ icon: 'x', label: 'Remove reminder', run: () => setRemind(null) });
+      return opts;
+    } });
+    items.push({ icon: 'repeat', label: 'Repeat', hint: t.recurrence ? REPEAT_LABEL[t.recurrence] : '', sub: () =>
+      [['', 'Never'], ...Object.entries(REPEAT_LABEL)].map(([v, n]) => ({ icon: v ? 'repeat' : 'x', label: n, checked: (t.recurrence || '') === v, run: () => updateTask(id, { recurrence: v }) })) });
+    if (list?.members.length > 1) items.push({ icon: 'user-round', label: 'Assign to', hint: t.assigned_name || '', sub: () => [
+      ...list.members.map((m) => ({ icon: 'user-round', label: m.id === S.me.id ? `${m.username} (me)` : m.username, checked: t.assigned_to === m.id, run: () => updateTask(id, { assigned_to: m.id }) })),
+      ...(t.assigned_to ? [{ icon: 'x', label: 'Unassign', run: () => updateTask(id, { assigned_to: null }) }] : []),
+    ] });
+  }
+  if (S.lists.length > 1) items.push({ icon: 'folder-input', label: 'Move to', hint: list?.is_inbox ? 'Inbox' : list?.name || '', sub: () => S.lists.filter((l) => l.id !== t.list_id).map((l) => ({
+    emoji: l.is_inbox ? '' : l.emoji, icon: l.is_inbox ? 'inbox' : 'list', label: l.is_inbox ? 'Inbox' : l.name,
+    run: async () => { await updateTask(id, { list_id: l.id }); toast(`Moved to ${l.is_inbox ? 'Inbox' : l.name}`); if (S.selected === id && S.view.type === 'list') closeDetail(); },
+  })) });
+  items.push({ icon: 'copy', label: 'Duplicate', run: async () => {
+    const copy = await api('POST', `/tasks/${id}/duplicate`);
+    if (S.view.type === 'list') { S.tasks.unshift(copy); renderTasks(); } else await loadTasks();
+    loadLists(); toast('Duplicated');
+  } });
+  items.push({ icon: 'trash-2', label: 'Delete to-do', danger: true, run: () => confirmModal(`Delete "${t.title}"?`, 'This can’t be undone.', 'Delete', async () => {
+    await api('DELETE', `/tasks/${id}`);
+    S.tasks = S.tasks.filter((x) => x.id !== id);
+    if (S.selected === id) closeDetail();
+    renderTasks(); loadLists();
+  }) });
+  return items;
+}
+
+function listMenuItems(id) {
+  const l = listById(id);
+  if (!l || l.is_inbox) return [];
+  const owner = l.owner_id === S.me.id;
+  return [
+    { icon: 'pencil', label: 'Edit name, emoji and color', run: () => listModal(l) },
+    { icon: 'user-plus', label: 'Share list', run: () => shareModal(l.id) },
+    ...(S.view.type === 'list' && S.view.id === l.id && S.tasks.some((t) => t.completed) ? [{ icon: 'eraser', label: 'Delete completed to-dos', run: () => {
+      const n = S.tasks.filter((t) => t.completed).length;
+      confirmModal(`Delete ${n} completed to-do${n > 1 ? 's' : ''}?`, 'This can’t be undone.', 'Delete', async () => { await api('DELETE', `/lists/${l.id}/completed`); await loadTasks(); });
+    } }] : []),
+    owner
+      ? { icon: 'trash-2', label: 'Delete list', danger: true, run: () => confirmModal(`Delete "${l.name}"?`, `All its to-dos will be deleted${l.members.length > 1 ? ' for everyone it’s shared with' : ''}.`, 'Delete', async () => { await api('DELETE', `/lists/${l.id}`); await loadLists(); if (S.view.type === 'list' && S.view.id === l.id) setView({ type: 'list', id: inbox().id }); }) }
+      : { icon: 'door-open', label: 'Leave list', danger: true, run: () => confirmModal(`Leave "${l.name}"?`, 'You’ll lose access until someone shares it again.', 'Leave', async () => { await api('DELETE', `/lists/${l.id}`); await loadLists(); if (S.view.type === 'list' && S.view.id === l.id) setView({ type: 'list', id: inbox().id }); }) },
+  ];
+}
+
+// Popover next to the pointer on wide screens, bottom sheet on phones.
+let menuEl = null, menuOnClose = null;
+function closeMenu() {
+  if (!menuEl) return;
+  menuEl.remove(); menuEl = null;
+  const cb = menuOnClose; menuOnClose = null; cb?.();
+}
+function showMenu(items, x, y, onClose, title = '') {
+  closeMenu();
+  menuOnClose = onClose;
+  const sheet = window.matchMedia('(max-width: 760px), (pointer: coarse)').matches;
+  menuEl = document.createElement('div');
+  menuEl.className = 'ctx-layer' + (sheet ? ' sheet' : '');
+  menuEl.innerHTML = `<div class="ctx-menu" role="menu"${title ? ` aria-label="${esc(title)}"` : ''}>${title ? `<div class="ctx-title">${esc(title)}</div>` : ''}${items.map((it, i) => `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.emoji ? `<span class="ctx-emoji">${esc(it.emoji)}</span>` : ic(it.icon)}<span>${esc(it.label)}</span>${it.hint ? `<em class="ctx-hint">${esc(it.hint)}</em>` : ''}${it.checked ? ic('check', 'sm ctx-check') : ''}${it.sub ? ic('chevron-down', 'sm chev-r') : ''}</button>`).join('')}</div>`;
+  document.body.appendChild(menuEl);
+  const menu = menuEl.querySelector('.ctx-menu');
+  if (!sheet) {
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  }
+  menuEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b) return closeMenu(); // tapped outside
+    const it = items[Number(b.dataset.i)];
+    if (it.sub) { const keep = menuOnClose; menuOnClose = null; showMenu(it.sub(), x, y, keep, it.label); return; }
+    closeMenu();
+    Promise.resolve(it.run()).catch(fail);
+  });
+  menu.querySelector('button')?.focus({ preventScroll: true });
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menuEl) { e.stopImmediatePropagation(); closeMenu(); } }, true);
+window.addEventListener('resize', closeMenu);
+
 boot();
