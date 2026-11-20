@@ -144,6 +144,9 @@ input, select, textarea { font: inherit; color: inherit; }
 .list-item[data-key="smart:today"] .li-ico { color: #4cc38a; }
 .list-item[data-key="smart:week"] .li-ico { color: #c79bff; }
 .list-item[data-key="smart:assigned"] .li-ico { color: #f5b14c; }
+.list-item.colored .li-ico, .list-item.colored.active .li-ico { color: var(--list-color); }
+.list-item.colored.active { background: color-mix(in srgb, var(--list-color) 18%, transparent); }
+.li-emoji { font-size: 17px; line-height: 1; }
 .list-item .li-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-item .li-count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 1.5em; text-align: right; }
 .list-item .li-shared { color: var(--faint); display: grid; }
@@ -300,6 +303,16 @@ input, select, textarea { font: inherit; color: inherit; }
 .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; }
 .swatch { height: 46px; border-radius: var(--r-ctl); border: 2px solid transparent; background-size: cover; background-position: center; }
 .swatch[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--panel) inset; }
+/* list editor */
+.modal-card input.emoji-in { width: 58px; flex: none; text-align: center; font-size: 22px; padding: 6px; }
+.emoji-picks { display: flex; flex-wrap: wrap; gap: 4px; }
+.emoji-picks button { width: 40px; height: 40px; border: 0; border-radius: var(--r-ctl); background: var(--raise); font-size: 20px; display: grid; place-items: center; color: var(--muted); }
+.emoji-picks button:hover { filter: brightness(1.15); }
+.color-picks { display: flex; flex-wrap: wrap; gap: 10px; }
+.color-picks button { width: 34px; height: 34px; border-radius: 50%; border: 0; background: var(--c, var(--raise)); display: grid; place-items: center; color: var(--muted); }
+.color-picks button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--c, var(--text)); }
+.swatch.upload { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: var(--raise); border: 1.5px dashed var(--faint); color: var(--muted); font-size: 12px; font-weight: 600; }
+.swatch.upload:hover { color: var(--text); border-color: var(--accent); }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
 .toast {
   position: fixed; left: 50%; bottom: calc(24px + var(--safe-bot)); transform: translateX(-50%); background: var(--text); color: var(--ink);

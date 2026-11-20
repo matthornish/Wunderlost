@@ -75,6 +75,16 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `);
 
+// Additive migrations: safe to run on every start against an existing database.
+function addColumn(table, column, def) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+}
+addColumn('lists', 'color', "TEXT NOT NULL DEFAULT ''");
+addColumn('lists', 'emoji', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'background', "TEXT NOT NULL DEFAULT 'scene:0'");
+
+db.DATA_DIR = DATA_DIR;
 db.getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
 db.setSetting = (key, value) =>
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
