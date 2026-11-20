@@ -38,7 +38,7 @@ Merge the release-please "Release PR" on GitHub. Once the `docker-publish` workf
 
 ## Backup
 
-Everything is in `/mnt/user/appdata/wunderlost` (`wunderlost.db` plus `-wal`/`-shm` files). Copy the folder while the container is stopped, or include it in your appdata backup. The push-notification keys are stored in the DB, so restoring it keeps existing phone subscriptions working.
+Everything is in `/mnt/user/appdata/wunderlost`: `wunderlost.db` (plus `-wal`/`-shm` files) and `backgrounds/` (uploaded background photos). Copy the folder while the container is stopped, or include it in your appdata backup. The push-notification keys are stored in the DB, so restoring it keeps existing phone subscriptions working.
 
 ## Environment variables
 

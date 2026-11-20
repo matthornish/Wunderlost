@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
@@ -23,7 +24,9 @@ webpush.setVapidDetails(VAPID_SUBJECT, vapid.publicKey, vapid.privateKey);
 const app = express();
 app.set('trust proxy', true);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '256kb' }));
+const jsonSmall = express.json({ limit: '256kb' });
+const jsonPhoto = express.json({ limit: '12mb' }); // background photo upload only
+app.use((req, res, next) => (req.path === '/api/me/background/photo' ? jsonPhoto : jsonSmall)(req, res, next));
 
 // ---------- helpers ----------
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -60,8 +63,8 @@ app.use('/api', (req, res, next) => {
 app.use('/api', (req, res, next) => {
   const token = parseCookies(req).wl_session;
   if (token) {
-    const row = db.prepare(`SELECT u.id, u.username, u.is_admin, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token);
-    if (row && row.expires_at > Date.now()) req.user = { id: row.id, username: row.username, is_admin: !!row.is_admin };
+    const row = db.prepare(`SELECT u.id, u.username, u.is_admin, u.background, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token);
+    if (row && row.expires_at > Date.now()) req.user = { id: row.id, username: row.username, is_admin: !!row.is_admin, background: row.background };
   }
   next();
 });
@@ -133,7 +136,12 @@ function startSession(req, res, userId) {
 
 app.get('/api/auth/status', (req, res) => {
   const hasUsers = !!db.prepare('SELECT 1 FROM users LIMIT 1').get();
-  res.json({ user: req.user || null, setupNeeded: !hasUsers, registrationOpen: !hasUsers || ALLOW_REGISTRATION });
+  let user = req.user || null;
+  if (user) {
+    const last = db.prepare('SELECT value FROM settings WHERE key = ?').get(`last_photo_${user.id}`)?.value;
+    user = { ...user, photo: (user.background.startsWith('photo:') ? user.background : last || '').replace(/^photo:/, '') };
+  }
+  res.json({ user, setupNeeded: !hasUsers, registrationOpen: !hasUsers || ALLOW_REGISTRATION });
 });
 
 app.post('/api/auth/register', wrap((req, res) => {
@@ -191,13 +199,15 @@ app.put('/api/users/:id/password', auth, admin, wrap((req, res) => {
 app.delete('/api/users/:id', auth, admin, wrap((req, res) => {
   if (Number(req.params.id) === req.user.id) throw new HttpError(400, "You can't delete yourself");
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id); // cascades to their owned lists
+  for (const f of fs.readdirSync(BG_DIR)) if (f.startsWith(`${Number(req.params.id)}-`)) fs.rm(path.join(BG_DIR, f), { force: true }, () => {});
+  db.prepare('DELETE FROM settings WHERE key = ?').run(`last_photo_${Number(req.params.id)}`);
   res.json({ ok: true });
 }));
 
 // ---------- lists ----------
 function listsFor(userId) {
   const lists = db.prepare(`
-    SELECT l.id, l.name, l.owner_id, l.is_inbox, m.position,
+    SELECT l.id, l.name, l.owner_id, l.is_inbox, l.color, l.emoji, m.position,
       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.completed = 0) AS open_count
     FROM lists l JOIN list_members m ON m.list_id = l.id AND m.user_id = ?
     ORDER BY l.is_inbox DESC, m.position, l.id`).all(userId);
@@ -223,7 +233,9 @@ app.post('/api/lists', auth, wrap((req, res) => {
   const name = str(req.body.name, 100);
   if (!name) throw new HttpError(400, 'Name required');
   const id = db.transaction(() => {
-    const id = db.prepare('INSERT INTO lists (name, owner_id) VALUES (?, ?)').run(name, req.user.id).lastInsertRowid;
+    const style = {};
+    listStyle(req.body, style);
+    const id = db.prepare('INSERT INTO lists (name, owner_id, color, emoji) VALUES (?, ?, ?, ?)').run(name, req.user.id, style.color || '', style.emoji || '').lastInsertRowid;
     const pos = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM list_members WHERE user_id = ?').get(req.user.id).p;
     db.prepare('INSERT INTO list_members (list_id, user_id, position) VALUES (?, ?, ?)').run(id, req.user.id, pos);
     return id;
@@ -238,12 +250,33 @@ app.put('/api/lists/order', auth, wrap((req, res) => {
   res.json({ ok: true });
 }));
 
+const LIST_COLORS = ['', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink'];
+// Emoji: keep at most 2 user-perceived characters, nothing that looks like markup.
+function cleanEmoji(v) {
+  const t = str(v, 32).replace(/[<>&"'`]/g, '');
+  const seg = typeof Intl.Segmenter === 'function' ? [...new Intl.Segmenter().segment(t)].map((x) => x.segment) : [...t];
+  const pict = seg.filter((x) => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(x));
+  return (pict.length ? pict : seg.filter((x) => x.trim())).slice(0, 2).join('');
+}
+function listStyle(body, sets) {
+  if ('color' in body) {
+    if (!LIST_COLORS.includes(body.color)) throw new HttpError(400, 'Unknown color');
+    sets.color = body.color;
+  }
+  if ('emoji' in body) sets.emoji = cleanEmoji(body.emoji);
+}
+
 app.put('/api/lists/:id', auth, wrap((req, res) => {
   const l = requireMember(req.user.id, req.params.id);
-  if (l.is_inbox) throw new HttpError(400, "Inbox can't be renamed");
-  const name = str(req.body.name, 100);
-  if (!name) throw new HttpError(400, 'Name required');
-  db.prepare('UPDATE lists SET name = ? WHERE id = ?').run(name, l.id);
+  if (l.is_inbox) throw new HttpError(400, "Inbox can't be edited");
+  const sets = {};
+  if ('name' in req.body) {
+    sets.name = str(req.body.name, 100);
+    if (!sets.name) throw new HttpError(400, 'Name required');
+  }
+  listStyle(req.body, sets);
+  const keys = Object.keys(sets);
+  if (keys.length) db.prepare(`UPDATE lists SET ${keys.map((k) => `${k} = @${k}`).join(', ')} WHERE id = @id`).run({ ...sets, id: l.id });
   notifyList(l.id);
   res.json({ ok: true });
 }));
@@ -443,6 +476,66 @@ app.delete('/api/subtasks/:id', auth, wrap((req, res) => {
   res.json({ ok: true });
 }));
 
+// ---------- background (per user, synced across devices) ----------
+const BG_DIR = path.join(db.DATA_DIR, 'backgrounds');
+fs.mkdirSync(BG_DIR, { recursive: true });
+const SCENE_COUNT = 8;
+const photoFile = (bg) => (bg?.startsWith('photo:') ? path.join(BG_DIR, path.basename(bg.slice(6))) : null);
+
+app.put('/api/me/background', auth, wrap((req, res) => {
+  const v = String(req.body.background || '');
+  const m = v.match(/^scene:(\d+)$/);
+  let next;
+  if (m && Number(m[1]) < SCENE_COUNT) next = v;
+  else if (v === 'photo') {
+    const cur = db.prepare('SELECT background FROM users WHERE id = ?').get(req.user.id).background;
+    const last = db.prepare("SELECT value FROM settings WHERE key = ?").get(`last_photo_${req.user.id}`)?.value;
+    next = cur.startsWith('photo:') ? cur : last && fs.existsSync(photoFile(last)) ? last : null;
+    if (!next) throw new HttpError(400, 'Upload a photo first');
+  } else throw new HttpError(400, 'Unknown background');
+  db.prepare('UPDATE users SET background = ? WHERE id = ?').run(next, req.user.id);
+  notifyUsers([req.user.id], { type: 'me' });
+  res.json({ background: next });
+}));
+
+app.post('/api/me/background/photo', auth, wrap((req, res) => {
+  const m = String(req.body.image || '').match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) throw new HttpError(400, 'Send a JPEG, PNG or WebP image');
+  const buf = Buffer.from(m[2], 'base64');
+  const magic = { jpeg: [0xff, 0xd8, 0xff], png: [0x89, 0x50, 0x4e, 0x47], webp: [0x52, 0x49, 0x46, 0x46] }[m[1]];
+  if (buf.length < 100 || !magic.every((b, i) => buf[i] === b)) throw new HttpError(400, "That file isn't a valid image");
+  if (buf.length > 8 * 1024 * 1024) throw new HttpError(413, 'Photo is too large (8 MB max)');
+  const name = `${req.user.id}-${crypto.randomBytes(6).toString('hex')}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
+  fs.writeFileSync(path.join(BG_DIR, name), buf);
+  const old = photoFile(db.prepare('SELECT background FROM users WHERE id = ?').get(req.user.id).background)
+    || photoFile(db.prepare('SELECT value FROM settings WHERE key = ?').get(`last_photo_${req.user.id}`)?.value);
+  const bg = `photo:${name}`;
+  db.prepare('UPDATE users SET background = ? WHERE id = ?').run(bg, req.user.id);
+  db.setSetting(`last_photo_${req.user.id}`, bg);
+  if (old && old !== photoFile(bg)) fs.rm(old, { force: true }, () => {});
+  notifyUsers([req.user.id], { type: 'me' });
+  res.json({ background: bg });
+}));
+
+app.delete('/api/me/background/photo', auth, wrap((req, res) => {
+  const cur = db.prepare('SELECT background FROM users WHERE id = ?').get(req.user.id).background;
+  const last = db.prepare('SELECT value FROM settings WHERE key = ?').get(`last_photo_${req.user.id}`)?.value;
+  for (const f of [photoFile(cur), photoFile(last)]) if (f) fs.rm(f, { force: true }, () => {});
+  db.prepare("DELETE FROM settings WHERE key = ?").run(`last_photo_${req.user.id}`);
+  if (cur.startsWith('photo:')) db.prepare("UPDATE users SET background = 'scene:0' WHERE id = ?").run(req.user.id);
+  notifyUsers([req.user.id], { type: 'me' });
+  res.json({ ok: true });
+}));
+
+app.get('/api/me/background/photo', auth, (req, res) => {
+  const cur = req.user.background;
+  const last = db.prepare('SELECT value FROM settings WHERE key = ?').get(`last_photo_${req.user.id}`)?.value;
+  const f = photoFile(cur) || photoFile(last);
+  if (!f || !fs.existsSync(f)) return res.status(404).json({ error: 'No photo' });
+  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  res.sendFile(f);
+});
+
 // ---------- push ----------
 app.get('/api/push/key', auth, (req, res) => res.json({ publicKey: vapid.publicKey }));
 app.post('/api/push/subscribe', auth, wrap((req, res) => {
@@ -499,7 +592,7 @@ setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Da
 // ---------- static + errors ----------
 // Service worker with a per-startup cache version, so every redeploy makes clients fetch fresh assets.
 const CACHE_VERSION = `${require('./package.json').version}-${Date.now().toString(36)}`;
-const swSource = require('fs').readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8').replace(/__CACHE_VERSION__/g, CACHE_VERSION);
+const swSource = fs.readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8').replace(/__CACHE_VERSION__/g, CACHE_VERSION);
 app.get('/sw.js', (req, res) => {
   res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
   res.send(swSource);

@@ -19,6 +19,11 @@ const BACKGROUNDS = [
   { name: 'Walnut', css: 'linear-gradient(160deg, #8a5a3b 0%, #5a3622 55%, #2e1c12 100%)' },
   { name: 'Graphite', css: 'linear-gradient(160deg, #2a2f38 0%, #16191f 100%)' },
 ];
+const LIST_COLORS = {
+  red: '#ff5a4e', orange: '#f5a524', yellow: '#e8c547', green: '#4cc38a',
+  teal: '#2bb3b1', blue: '#5b9dff', purple: '#a780ff', pink: '#ff6fae',
+};
+const EMOJI_PICKS = ['🛒', '🏠', '💼', '🎺', '🔧', '💊', '🎁', '✈️', '📚', '🐶', '💡', '🎮'];
 const ic = (name, cls = '') => `<svg class="ico ${cls}" aria-hidden="true"><use href="/icons.svg#${name}"/></svg>`;
 const REPEAT_LABEL = { daily: 'Daily', weekdays: 'Weekdays', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', yearly: 'Yearly' };
 const SMART = {
@@ -132,6 +137,7 @@ $('#auth-form').onsubmit = async (e) => {
 
 // ---------------- app start ----------------
 async function startApp() {
+  applyBackground();
   $('#auth').classList.add('hidden');
   $('#app').classList.remove('hidden');
   $('#user-name').textContent = S.me.username;
@@ -172,9 +178,11 @@ async function loadLists() {
   S.lists = d.lists; S.smart = d.smart || {};
   renderSidebar();
 }
-function listButton({ key, ico, name, count, active, shared, attrs = '' }) {
-  return `<button class="list-item${active ? ' active' : ''}" data-key="${esc(key)}" ${attrs}>
-    <span class="li-ico">${ic(ico)}</span><span class="li-name">${esc(name)}</span>
+function listButton({ key, ico, name, count, active, shared, emoji, color, attrs = '' }) {
+  const style = color && LIST_COLORS[color] ? ` style="--list-color:${LIST_COLORS[color]}"` : '';
+  const mark = emoji ? `<span class="li-emoji">${esc(emoji)}</span>` : ic(ico);
+  return `<button class="list-item${active ? ' active' : ''}${style ? ' colored' : ''}" data-key="${esc(key)}"${style} ${attrs}>
+    <span class="li-ico">${mark}</span><span class="li-name">${esc(name)}</span>
     ${shared ? `<span class="li-shared" title="Shared">${ic('users')}</span>` : ''}
     ${count ? `<span class="li-count">${count}</span>` : ''}</button>`;
 }
@@ -189,7 +197,7 @@ function renderSidebar() {
   }
   $('#smart-lists').innerHTML = smart;
   $('#user-lists').innerHTML = S.lists.filter((l) => !l.is_inbox).map((l) => listButton({
-    key: `list:${l.id}`, ico: 'list', name: l.name, count: l.open_count, shared: l.members.length > 1,
+    key: `list:${l.id}`, ico: 'list', name: l.name, count: l.open_count, shared: l.members.length > 1, emoji: l.emoji, color: l.color,
     active: v.type === 'list' && v.id === l.id, attrs: `draggable="true" data-drop="${l.id}" data-lid="${l.id}"`,
   })).join('');
   document.title = (S.smart.today ? `(${S.smart.today}) ` : '') + 'Wunderlost';
@@ -240,10 +248,37 @@ for (const nav of [$('#smart-lists'), $('#user-lists')]) {
 document.addEventListener('dragend', () => { dragList = null; dragTask = null; clearDragMarks(); document.querySelectorAll('.dragging').forEach((n) => n.classList.remove('dragging')); });
 function clearDragMarks() { document.querySelectorAll('.drag-over,.drop-target').forEach((n) => n.classList.remove('drag-over', 'drop-target')); }
 
-$('#create-list').onclick = () => promptModal('New list', '', 'Create', async (name) => {
-  const { id } = await api('POST', '/lists', { name });
-  await loadLists(); setView({ type: 'list', id });
-});
+$('#create-list').onclick = () => listModal(null);
+
+// Create or edit a list: name, emoji and color.
+function listModal(l) {
+  let color = l?.color || '', emoji = l?.emoji || '';
+  const c = openModal(`<h2>${l ? 'Edit list' : 'New list'}</h2>
+    <form id="lf" style="display:grid;gap:12px">
+      <div class="inline"><input id="lf-emoji" class="emoji-in" maxlength="16" placeholder="🙂" aria-label="Emoji" value="${esc(emoji)}"><input id="lf-name" maxlength="100" placeholder="List name" required value="${esc(l?.name || '')}"></div>
+      <div class="emoji-picks">${EMOJI_PICKS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join('')}<button type="button" data-emoji="" title="No emoji">${ic('x', 'sm')}</button></div>
+      <h4>Color</h4>
+      <div class="color-picks"><button type="button" data-color="" aria-label="No color" aria-pressed="${!color}">${ic('x', 'sm')}</button>${Object.entries(LIST_COLORS).map(([k, v]) => `<button type="button" data-color="${k}" aria-label="${k}" aria-pressed="${color === k}" style="--c:${v}"></button>`).join('')}</div>
+      <p class="err" id="lf-err"></p>
+      <div class="actions"><button type="button" class="btn" id="lf-cancel">Cancel</button><button class="btn primary">${l ? 'Save' : 'Create list'}</button></div>
+    </form>`);
+  const name = $('#lf-name', c), em = $('#lf-emoji', c);
+  name.focus(); if (l) name.select();
+  $('#lf-cancel', c).onclick = closeModal;
+  c.querySelectorAll('[data-emoji]').forEach((b) => b.onclick = () => { em.value = b.dataset.emoji; });
+  c.querySelectorAll('[data-color]').forEach((b) => b.onclick = () => {
+    color = b.dataset.color;
+    c.querySelectorAll('[data-color]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  });
+  $('#lf', c).onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { name: name.value.trim(), emoji: em.value.trim(), color };
+    try {
+      if (l) { await api('PUT', `/lists/${l.id}`, body); await loadLists(); renderHeader(); closeModal(); }
+      else { const { id } = await api('POST', '/lists', body); closeModal(); await loadLists(); setView({ type: 'list', id }); }
+    } catch (ex) { $('#lf-err', c).textContent = ex.message; }
+  };
+}
 
 // search
 $('#search-btn').onclick = () => {
@@ -280,7 +315,7 @@ async function setView(view) {
 }
 function viewName() {
   const v = S.view;
-  if (v.type === 'list') { const l = listById(v.id); return l?.is_inbox ? 'Inbox' : l?.name || ''; }
+  if (v.type === 'list') { const l = listById(v.id); return l?.is_inbox ? 'Inbox' : l ? (l.emoji ? `${l.emoji} ` : '') + l.name : ''; }
   if (v.id === 'search') return `Search: ${S.searchQ}`;
   return SMART[v.id]?.name || '';
 }
@@ -588,14 +623,14 @@ $('#list-menu-btn').onclick = () => {
   const owner = l.owner_id === S.me.id;
   const done = S.tasks.filter((t) => t.completed).length;
   const c = openModal(`<h2>${esc(l.is_inbox ? 'Inbox' : l.name)}</h2><div class="menu-list">
-    ${l.is_inbox ? '' : `<button data-a="rename">${ic('pencil')}Rename list</button><button data-a="share">${ic('user-plus')}Share list</button>`}
+    ${l.is_inbox ? '' : `<button data-a="rename">${ic('pencil')}Edit name, emoji and color</button><button data-a="share">${ic('user-plus')}Share list</button>`}
     ${done ? `<button data-a="clear">${ic('eraser')}Delete ${done} completed to-do${done > 1 ? 's' : ''}</button>` : ''}
     ${l.is_inbox ? '' : owner ? `<button data-a="delete" class="danger">${ic('trash-2')}Delete list</button>` : `<button data-a="leave" class="danger">${ic('door-open')}Leave list</button>`}
     </div><div class="actions"><button class="btn" id="lm-close">Close</button></div>`);
   $('#lm-close', c).onclick = closeModal;
   c.querySelector('.menu-list').onclick = (e) => {
     const a = e.target.closest('button')?.dataset.a;
-    if (a === 'rename') promptModal('Rename list', l.name, 'Save', async (name) => { await api('PUT', `/lists/${l.id}`, { name }); await loadLists(); renderHeader(); });
+    if (a === 'rename') listModal(l);
     if (a === 'share') shareModal(l.id);
     if (a === 'clear') confirmModal(`Delete ${done} completed to-dos?`, 'This can’t be undone.', 'Delete', async () => { await api('DELETE', `/lists/${l.id}/completed`); await loadTasks(); });
     if (a === 'delete') confirmModal(`Delete "${l.name}"?`, `All its to-dos will be deleted${l.members.length > 1 ? ' for everyone it’s shared with' : ''}.`, 'Delete', async () => { await api('DELETE', `/lists/${l.id}`); await loadLists(); setView({ type: 'list', id: inbox().id }); });
@@ -627,7 +662,8 @@ function shareModal(listId) {
 // settings
 $('#user-btn').onclick = settingsModal;
 async function settingsModal() {
-  const bg = ls.get('bg', 0);
+  const bg = S.me.background || 'scene:0';
+  const photoUrl = S.me.photo ? `/api/me/background/photo?v=${encodeURIComponent(S.me.photo)}` : '';
   const pushState = await getPushState();
   const c = openModal(`<h2>Settings</h2>
     <h4>Notifications</h4>
@@ -637,7 +673,12 @@ async function settingsModal() {
     <label class="toggle-row"><span>Completion sound</span><input type="checkbox" id="st-sound" ${ls.get('sound', true) ? 'checked' : ''}></label>
     <h4>Appearance</h4>
     <div class="seg" role="group" aria-label="Theme">${[['auto', 'monitor', 'Auto'], ['dark', 'moon', 'Dark'], ['light', 'sun', 'Light']].map(([v, i, n]) => `<button data-theme-opt="${v}" aria-pressed="${ls.get('theme', 'auto') === v}">${ic(i, 'sm')}${n}</button>`).join('')}</div>
-    <div class="swatches">${BACKGROUNDS.map((b, i) => `<button class="swatch" data-bg="${i}" title="${esc(b.name)}" aria-label="${esc(b.name)} background" aria-pressed="${i === bg}" style="background:${b.css}"></button>`).join('')}</div>
+    <div class="swatches">${BACKGROUNDS.map((b, i) => `<button class="swatch" data-bg="scene:${i}" title="${esc(b.name)}" aria-label="${esc(b.name)} background" aria-pressed="${bg === `scene:${i}`}" style="background:${b.css}"></button>`).join('')}
+      ${photoUrl ? `<button class="swatch" data-bg="photo" title="Your photo" aria-label="Your photo background" aria-pressed="${bg.startsWith('photo:')}" style="background-image:url('${photoUrl}')"></button>` : ''}
+      <button class="swatch upload" id="st-photo" title="${photoUrl ? 'Replace your photo' : 'Use your own photo'}">${ic(photoUrl ? 'pencil' : 'plus')}<span>${photoUrl ? 'Replace' : 'Photo'}</span></button>
+    </div>
+    ${photoUrl ? '<button class="link" id="st-photo-rm" style="justify-self:start">Remove your photo</button>' : ''}
+    <input type="file" id="st-photo-file" accept="image/jpeg,image/png,image/webp,image/heic,image/*" hidden>
     <h4>Password</h4>
     <form id="st-pw" style="display:grid;gap:8px"><input type="password" id="st-cur" placeholder="Current password" autocomplete="current-password" required>
       <input type="password" id="st-new" placeholder="New password (8+ chars)" autocomplete="new-password" minlength="8" required>
@@ -648,10 +689,30 @@ async function settingsModal() {
   const err = $('#st-err', c);
   $('#st-close', c).onclick = closeModal;
   $('#st-sound', c).onchange = (e) => ls.set('sound', e.target.checked);
-  c.querySelectorAll('[data-bg]').forEach((b) => b.onclick = () => {
-    ls.set('bg', Number(b.dataset.bg)); applyBackground();
-    c.querySelectorAll('[data-bg]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  c.querySelectorAll('[data-bg]').forEach((b) => b.onclick = async () => {
+    try {
+      const r = await api('PUT', '/me/background', { background: b.dataset.bg });
+      S.me.background = r.background; applyBackground();
+      c.querySelectorAll('[data-bg]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+    } catch (e) { err.textContent = e.message; }
   });
+  $('#st-photo', c).onclick = () => $('#st-photo-file', c).click();
+  $('#st-photo-file', c).onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    toast('Uploading photo…');
+    try {
+      const image = await shrinkImage(file, 2400, 0.85);
+      const r = await api('POST', '/me/background/photo', { image });
+      S.me.background = r.background; S.me.photo = r.background.replace(/^photo:/, '');
+      applyBackground(); toast('Background updated'); settingsModal();
+    } catch (ex) { err.textContent = ex.message; }
+  };
+  $('#st-photo-rm', c)?.addEventListener('click', () => confirmModal('Remove your photo?', 'Your background switches back to Deep sea. You can upload a photo again anytime.', 'Remove photo', async () => {
+    await api('DELETE', '/me/background/photo');
+    S.me.photo = ''; if (S.me.background.startsWith('photo:')) S.me.background = 'scene:0';
+    applyBackground();
+  }));
   c.querySelectorAll('[data-theme-opt]').forEach((b) => b.onclick = () => {
     ls.set('theme', b.dataset.themeOpt); applyTheme();
     c.querySelectorAll('[data-theme-opt]').forEach((x) => x.setAttribute('aria-pressed', x === b));
@@ -678,8 +739,28 @@ async function settingsModal() {
   };
 }
 function applyBackground() {
-  const b = BACKGROUNDS[ls.get('bg', 0)] || BACKGROUNDS[0];
-  document.documentElement.style.setProperty('--bg-scene', b.css);
+  const bg = S.me?.background || 'scene:0';
+  let css;
+  if (bg.startsWith('photo:')) css = `url("/api/me/background/photo?v=${encodeURIComponent(bg.slice(6))}")`;
+  else css = (BACKGROUNDS[Number(bg.split(':')[1])] || BACKGROUNDS[0]).css;
+  document.documentElement.style.setProperty('--bg-scene', css);
+}
+// Downscale a photo in the browser before upload: phone photos are often 5-12 MB.
+function shrinkImage(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.naturalWidth * scale); cv.height = Math.round(img.naturalHeight * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      resolve(cv.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read that image. Try a JPEG or PNG.")); };
+    img.src = url;
+  });
 }
 const lightMQ = window.matchMedia('(prefers-color-scheme: light)');
 function applyTheme() {
@@ -694,7 +775,7 @@ async function usersModal() {
   const users = await api('GET', '/users');
   const c = openModal(`<h2>Users</h2>
     <div>${users.map((u) => `<div class="member"><span class="avatar">${esc(u.username[0])}</span><span class="name">${esc(u.username)}${u.is_admin ? ' <span class="muted small">admin</span>' : ''}</span>
-      <button class="link" data-pw="${u.id}">Reset pw</button>${u.id !== S.me.id ? `<button class="link" style="color:var(--red)" data-del="${u.id}" data-name="${esc(u.username)}">Delete</button>` : ''}</div>`).join('')}</div>
+      <button class="link" data-pw="${u.id}">Reset pw</button>${u.id !== S.me.id ? `<button class="link" style="color:var(--danger)" data-del="${u.id}" data-name="${esc(u.username)}">Delete</button>` : ''}</div>`).join('')}</div>
     <h4>Add user</h4>
     <form id="u-form" style="display:grid;gap:8px"><input id="u-name" placeholder="Username" autocapitalize="none" required>
       <input id="u-pass" type="password" placeholder="Temporary password (8+ chars)" minlength="8" autocomplete="new-password" required>
@@ -721,7 +802,11 @@ let es, refreshT;
 function connectEvents() {
   es?.close();
   es = new EventSource('/api/events');
-  es.onmessage = () => { clearTimeout(refreshT); refreshT = setTimeout(refresh, 300); };
+  es.onmessage = (e) => {
+    let d = {}; try { d = JSON.parse(e.data); } catch {}
+    if (d.type === 'me') { api('GET', '/auth/status').then((st) => { if (st.user) { S.me = st.user; applyBackground(); } }).catch(() => {}); return; }
+    clearTimeout(refreshT); refreshT = setTimeout(refresh, 300);
+  };
   es.onerror = () => { /* browser auto-reconnects (retry: 5000) */ };
 }
 async function refresh() {
