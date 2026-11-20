@@ -552,19 +552,50 @@ app.get('/api/me/background/photo', auth, (req, res) => {
 
 // ---------- push ----------
 app.get('/api/push/key', auth, (req, res) => res.json({ publicKey: vapid.publicKey }));
+// Push endpoints must belong to a real browser push service. Without this, a signed-in user
+// could register an internal URL and make the server send requests into the private network.
+const PUSH_HOSTS = ['fcm.googleapis.com', 'push.services.mozilla.com', 'notify.windows.com', 'push.apple.com',
+  ...(process.env.PUSH_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)];
+const MAX_SUBS_PER_USER = 10;
+function validPushEndpoint(endpoint) {
+  if (typeof endpoint !== 'string' || endpoint.length > 1024) return false;
+  let u;
+  try { u = new URL(endpoint); } catch { return false; }
+  if (u.protocol !== 'https:' || (u.port && u.port !== '443') || u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  return PUSH_HOSTS.some((h) => host === h || host.endsWith('.' + h));
+}
+const b64url = (v, max) => typeof v === 'string' && v.length >= 16 && v.length <= max && /^[A-Za-z0-9_-]+=*$/.test(v);
+
 app.post('/api/push/subscribe', auth, wrap((req, res) => {
   const s = req.body;
-  if (!s?.endpoint || !s?.keys?.p256dh || !s?.keys?.auth) throw new HttpError(400, 'Bad subscription');
-  db.prepare(`INSERT INTO push_subs (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)
-    ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`)
-    .run(req.user.id, s.endpoint, s.keys.p256dh, s.keys.auth);
+  if (!validPushEndpoint(s?.endpoint)) throw new HttpError(400, "This browser's push service isn't supported");
+  if (!b64url(s?.keys?.p256dh, 128) || !b64url(s?.keys?.auth, 64)) throw new HttpError(400, 'Bad subscription');
+  db.transaction(() => {
+    const existing = db.prepare('SELECT * FROM push_subs WHERE endpoint = ?').get(s.endpoint);
+    if (existing && existing.user_id !== req.user.id) {
+      // Same browser, different account: allowed only with the same keys (proof it's that browser).
+      if (existing.p256dh !== s.keys.p256dh || existing.auth !== s.keys.auth) throw new HttpError(409, 'Subscription belongs to another account');
+      db.prepare('UPDATE push_subs SET user_id = ? WHERE id = ?').run(req.user.id, existing.id);
+    } else if (existing) {
+      db.prepare('UPDATE push_subs SET p256dh = ?, auth = ? WHERE id = ?').run(s.keys.p256dh, s.keys.auth, existing.id);
+    } else {
+      db.prepare('INSERT INTO push_subs (user_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?)').run(req.user.id, s.endpoint, s.keys.p256dh, s.keys.auth);
+    }
+    // Keep only the newest few devices per user.
+    db.prepare(`DELETE FROM push_subs WHERE user_id = ? AND id NOT IN (SELECT id FROM push_subs WHERE user_id = ? ORDER BY id DESC LIMIT ${MAX_SUBS_PER_USER})`).run(req.user.id, req.user.id);
+  })();
   res.json({ ok: true });
 }));
 app.post('/api/push/unsubscribe', auth, wrap((req, res) => {
   db.prepare('DELETE FROM push_subs WHERE endpoint = ? AND user_id = ?').run(String(req.body.endpoint || ''), req.user.id);
   res.json({ ok: true });
 }));
+const testHits = new Map(); // userId -> [timestamps]
 app.post('/api/push/test', auth, wrap(async (req, res) => {
+  const now = Date.now(), recent = (testHits.get(req.user.id) || []).filter((t) => now - t < 60000);
+  if (recent.length >= 5) throw new HttpError(429, 'Too many test notifications, wait a minute');
+  testHits.set(req.user.id, [...recent, now]);
   const subs = db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?').get(req.user.id).n;
   const errors = [];
   const sent = await pushToUser(req.user.id, { title: 'Wunderlost', body: 'Notifications are working.', url: '/' }, errors);
@@ -575,14 +606,15 @@ async function pushToUser(userId, payload, errors = []) {
   const subs = db.prepare('SELECT * FROM push_subs WHERE user_id = ?').all(userId);
   let sent = 0;
   await Promise.all(subs.map(async (s) => {
+    if (!validPushEndpoint(s.endpoint)) { db.prepare('DELETE FROM push_subs WHERE id = ?').run(s.id); return; }
     try {
-      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), { TTL: 3600 });
+      await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), { TTL: 3600, timeout: 10000 });
       sent++;
     } catch (e) {
-      const msg = `${e.statusCode || ''} ${e.body || e.message}`.trim();
-      errors.push(msg);
+      // Details go to the server log only; the browser just gets the status code.
+      errors.push(e.statusCode ? `push service answered ${e.statusCode}` : "couldn't reach the push service");
       if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subs WHERE id = ?').run(s.id);
-      console.error('push failed', msg);
+      console.error('push failed', new URL(s.endpoint).hostname, e.statusCode || '', e.body || e.message);
     }
   }));
   return sent;
@@ -600,6 +632,7 @@ async function reminderTick() {
     for (const uid of targets) await pushToUser(uid, payload);
   }
 }
+setInterval(() => { const cut = Date.now() - 60000; for (const [k, v] of testHits) if (!v.some((t) => t > cut)) testHits.delete(k); }, 300000).unref();
 setInterval(() => reminderTick().catch((e) => console.error('reminder loop', e)), 20000);
 setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()), 3600000);
 
