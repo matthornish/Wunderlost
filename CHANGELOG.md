@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0](https://github.com/matthornish/Wunderlost/compare/v1.2.1...v1.3.0) (2026-11-20)
+
+
+### Features
+
+* release under AGPL-3.0 with a source link and self-hosting docs ([#10](https://github.com/matthornish/Wunderlost/issues/10)) ([a4e8120](https://github.com/matthornish/Wunderlost/commit/a4e8120abd93628c0594d61621ea995c073780bd))
+
+
+### Bug Fixes
+
+* add security headers and per-user limits ([#14](https://github.com/matthornish/Wunderlost/issues/14)) ([a7f2db3](https://github.com/matthornish/Wunderlost/commit/a7f2db3b10704089803bc7bad1d52d0ae8b6d676))
+* harden sign-in against guessing, spoofed IPs and first-run takeover ([#11](https://github.com/matthornish/Wunderlost/issues/11)) ([4b0c80b](https://github.com/matthornish/Wunderlost/commit/4b0c80bf29c1d7b9f609fe23beea9e2301e7e1a1))
+* only send push notifications to real browser push services ([#12](https://github.com/matthornish/Wunderlost/issues/12)) ([2b2a944](https://github.com/matthornish/Wunderlost/commit/2b2a9441db294d9162a2950bb5629caa8e9ee17c))
+* sharing needs the list owner to invite and the person to accept ([#13](https://github.com/matthornish/Wunderlost/issues/13)) ([428faee](https://github.com/matthornish/Wunderlost/commit/428faeece6d57047f603320b21ad900a2dca27bc))
+
 ## [1.2.1](https://github.com/matthornish/Wunderlost/compare/v1.2.0...v1.2.1) (2026-11-20)
 
 
