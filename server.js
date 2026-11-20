@@ -1,3 +1,5 @@
+// Wunderlost — self-hosted to-do lists. Copyright (C) 2026 Matt Hornish.
+// Licensed under the GNU AGPL v3 or later; see LICENSE. Provided as-is, without warranty.
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -11,6 +13,10 @@ const PORT = Number(process.env.PORT || 3000);
 const ALLOW_REGISTRATION = /^(1|true|yes)$/i.test(process.env.ALLOW_REGISTRATION || '');
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 90);
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
+const VERSION = require('./package.json').version;
+// AGPL-3.0 section 13: users of a network service get a link to its source.
+// If you run a modified version, point this at your own fork.
+const SOURCE_URL = process.env.SOURCE_URL || 'https://github.com/matthornish/Wunderlost';
 
 // ---------- Web push (VAPID keys generated once, stored in DB) ----------
 let vapid = { publicKey: db.getSetting('vapid_public'), privateKey: db.getSetting('vapid_private') };
@@ -141,7 +147,7 @@ app.get('/api/auth/status', (req, res) => {
     const last = db.prepare('SELECT value FROM settings WHERE key = ?').get(`last_photo_${user.id}`)?.value;
     user = { ...user, photo: (user.background.startsWith('photo:') ? user.background : last || '').replace(/^photo:/, '') };
   }
-  res.json({ user, setupNeeded: !hasUsers, registrationOpen: !hasUsers || ALLOW_REGISTRATION });
+  res.json({ user, setupNeeded: !hasUsers, registrationOpen: !hasUsers || ALLOW_REGISTRATION, version: VERSION, source: SOURCE_URL });
 });
 
 app.post('/api/auth/register', wrap((req, res) => {
@@ -605,7 +611,7 @@ setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Da
 
 // ---------- static + errors ----------
 // Service worker with a per-startup cache version, so every redeploy makes clients fetch fresh assets.
-const CACHE_VERSION = `${require('./package.json').version}-${Date.now().toString(36)}`;
+const CACHE_VERSION = `${VERSION}-${Date.now().toString(36)}`;
 const swSource = fs.readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8').replace(/__CACHE_VERSION__/g, CACHE_VERSION);
 app.get('/sw.js', (req, res) => {
   res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });

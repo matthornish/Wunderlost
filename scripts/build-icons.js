@@ -1,3 +1,4 @@
+// Wunderlost — Copyright (C) 2026 Matt Hornish. AGPL-3.0-or-later; see LICENSE.
 // Builds public/icons.svg (an SVG sprite) from the Lucide icons used by the app.
 // Run after changing the list: npm run build:icons
 const fs = require('fs');
