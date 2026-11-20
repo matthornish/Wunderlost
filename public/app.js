@@ -897,10 +897,18 @@ function openMenuFor(target, x, y) {
   menuOpenedAt = Date.now();
   const items = target.kind === 'task' ? taskMenuItems(target.id) : listMenuItems(target.id);
   if (!items.length) return;
-  const title = target.kind === 'task' ? taskById(target.id)?.title : listById(target.id)?.name;
+  window.getSelection()?.removeAllRanges();
   navigator.vibrate?.(12);
   target.el.classList.add('pressed');
-  showMenu(items, x, y, () => target.el.classList.remove('pressed'), title);
+  const done = () => target.el.classList.remove('pressed');
+  if (target.kind === 'task') {
+    // To-do menus lead with the title in an editable box (not focused, nothing selected).
+    const id = target.id;
+    showMenu(items, x, y, done, '', {
+      value: taskById(id)?.title || '',
+      save: (v) => { const t = taskById(id); if (t && v && v !== t.title) return updateTask(id, { title: v }); },
+    });
+  } else showMenu(items, x, y, done, listById(target.id)?.name);
 }
 
 document.addEventListener('contextmenu', (e) => {
@@ -910,6 +918,10 @@ document.addEventListener('contextmenu', (e) => {
   clearTimeout(pressTimer);
   if (pressStart) suppressClickUntil = Date.now() + 800; // touch long press: a click may follow on lift
   openMenuFor(t, e.clientX, e.clientY);
+});
+// Long-pressing text on a phone starts a native text selection; block it on to-dos and lists.
+document.addEventListener('selectstart', (e) => {
+  if (pressStart || (menuTargetFrom(e.target) && !e.target.closest?.('input, textarea'))) e.preventDefault();
 });
 document.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse') return; // mouse uses right-click
@@ -1014,18 +1026,21 @@ function listMenuItems(id) {
 
 // Popover next to the pointer on wide screens, bottom sheet on phones.
 let menuEl = null, menuOnClose = null;
+let menuCommit = null; // saves the editable title when the menu closes
 function closeMenu() {
   if (!menuEl) return;
+  const commit = menuCommit; menuCommit = null;
+  commit?.();
   menuEl.remove(); menuEl = null;
   const cb = menuOnClose; menuOnClose = null; cb?.();
 }
-function showMenu(items, x, y, onClose, title = '') {
+function showMenu(items, x, y, onClose, title = '', edit = null) {
   closeMenu();
   menuOnClose = onClose;
   const sheet = window.matchMedia('(max-width: 760px), (pointer: coarse)').matches;
   menuEl = document.createElement('div');
   menuEl.className = 'ctx-layer' + (sheet ? ' sheet' : '');
-  menuEl.innerHTML = `<div class="ctx-menu" role="menu"${title ? ` aria-label="${esc(title)}"` : ''}>${title ? `<div class="ctx-title">${esc(title)}</div>` : ''}${items.map((it, i) => `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.emoji ? `<span class="ctx-emoji">${esc(it.emoji)}</span>` : ic(it.icon)}<span>${esc(it.label)}</span>${it.hint ? `<em class="ctx-hint">${esc(it.hint)}</em>` : ''}${it.checked ? ic('check', 'sm ctx-check') : ''}${it.sub ? ic('chevron-down', 'sm chev-r') : ''}</button>`).join('')}</div>`;
+  menuEl.innerHTML = `<div class="ctx-menu" role="menu"${title ? ` aria-label="${esc(title)}"` : ''}>${title ? `<div class="ctx-title">${esc(title)}</div>` : ''}${edit ? `<label class="ctx-edit-wrap"><textarea class="ctx-edit" rows="1" maxlength="500" aria-label="Title" enterkeyhint="done">${esc(edit.value)}</textarea>${ic('pencil', 'sm')}</label>` : ''}${items.map((it, i) => `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.emoji ? `<span class="ctx-emoji">${esc(it.emoji)}</span>` : ic(it.icon)}<span>${esc(it.label)}</span>${it.hint ? `<em class="ctx-hint">${esc(it.hint)}</em>` : ''}${it.checked ? ic('check', 'sm ctx-check') : ''}${it.sub ? ic('chevron-down', 'sm chev-r') : ''}</button>`).join('')}</div>`;
   document.body.appendChild(menuEl);
   const menu = menuEl.querySelector('.ctx-menu');
   if (!sheet) {
@@ -1033,17 +1048,35 @@ function showMenu(items, x, y, onClose, title = '') {
     menu.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
     menu.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
   }
+  const box = menu.querySelector('.ctx-edit');
+  if (box) {
+    autosize(box);
+    let saved = edit.value;
+    const commit = () => {
+      const v = box.value.replace(/\s+/g, ' ').trim();
+      if (!v) { box.value = saved; return; } // empty title: put it back
+      if (v !== saved) { saved = v; Promise.resolve(edit.save(v)).catch(fail); }
+    };
+    menuCommit = commit;
+    box.addEventListener('input', () => autosize(box));
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); box.blur(); } });
+    box.addEventListener('blur', commit);
+  }
   menuEl.addEventListener('click', (e) => {
+    if (e.target.closest('.ctx-edit')) return;
     const b = e.target.closest('[data-i]');
-    if (!b) return closeMenu(); // tapped outside
+    if (!b) { if (!e.target.closest('.ctx-menu')) closeMenu(); return; } // tapped outside closes
     const it = items[Number(b.dataset.i)];
-    if (it.sub) { const keep = menuOnClose; menuOnClose = null; showMenu(it.sub(), x, y, keep, it.label); return; }
+    if (it.sub) { menuCommit?.(); menuCommit = null; const keep = menuOnClose; menuOnClose = null; showMenu(it.sub(), x, y, keep, it.label); return; }
     closeMenu();
     Promise.resolve(it.run()).catch(fail);
   });
-  menu.querySelector('button')?.focus({ preventScroll: true });
+  // Keyboard users get focus on the first action; on touch, don't focus anything (no keyboard pop-up).
+  if (!sheet) menu.querySelector('button')?.focus({ preventScroll: true });
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menuEl) { e.stopImmediatePropagation(); closeMenu(); } }, true);
-window.addEventListener('resize', closeMenu);
+// Close on rotation, but not when the on-screen keyboard opens (that only changes height).
+let lastW = innerWidth;
+window.addEventListener('resize', () => { if (innerWidth !== lastW) { lastW = innerWidth; closeMenu(); } });
 
 boot();
