@@ -83,6 +83,9 @@ function addColumn(table, column, def) {
 addColumn('lists', 'color', "TEXT NOT NULL DEFAULT ''");
 addColumn('lists', 'emoji', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'background', "TEXT NOT NULL DEFAULT 'scene:0'");
+// Sharing needs consent: an invited user isn't a member until they accept.
+addColumn('list_members', 'status', "TEXT NOT NULL DEFAULT 'active'");
+addColumn('list_members', 'invited_by', 'INTEGER');
 
 db.DATA_DIR = DATA_DIR;
 db.getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;

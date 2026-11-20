@@ -175,7 +175,7 @@ async function openTaskFromLink(id) {
 // ---------------- sidebar ----------------
 async function loadLists() {
   const d = await api('GET', '/lists');
-  S.lists = d.lists; S.smart = d.smart || {};
+  S.lists = d.lists; S.smart = d.smart || {}; S.invites = d.invites || [];
   renderSidebar();
 }
 function listButton({ key, ico, name, count, active, shared, emoji, color, attrs = '' }) {
@@ -196,7 +196,10 @@ function renderSidebar() {
     smart += listButton({ key: `smart:${k}`, ico: SMART[k].ico, name: SMART[k].name, count: S.smart[k] || 0, active: v.type === 'smart' && v.id === k });
   }
   $('#smart-lists').innerHTML = smart;
-  $('#user-lists').innerHTML = S.lists.filter((l) => !l.is_inbox).map((l) => listButton({
+  const invites = (S.invites || []).map((i) => `<div class="invite" data-inv="${i.id}">
+      <div class="inv-text"><b>${i.emoji ? esc(i.emoji) + ' ' : ''}${esc(i.name)}</b><span class="muted small">${esc(i.owner)} wants to share this list with you</span></div>
+      <div class="inv-actions"><button class="btn primary sm" data-accept="${i.id}">Join</button><button class="btn sm" data-decline="${i.id}">Decline</button></div></div>`).join('');
+  $('#user-lists').innerHTML = invites + S.lists.filter((l) => !l.is_inbox).map((l) => listButton({
     key: `list:${l.id}`, ico: 'list', name: l.name, count: l.open_count, shared: l.members.length > 1, emoji: l.emoji, color: l.color,
     active: v.type === 'list' && v.id === l.id, attrs: `draggable="true" data-drop="${l.id}" data-lid="${l.id}"`,
   })).join('');
@@ -209,6 +212,17 @@ function onListClick(e) {
   setView({ type, id: type === 'list' ? Number(id) : id });
 }
 $('#smart-lists').onclick = onListClick;
+$('#user-lists').addEventListener('click', async (e) => {
+  const acc = e.target.closest('[data-accept]'), dec = e.target.closest('[data-decline]');
+  if (!acc && !dec) return;
+  e.stopPropagation();
+  const id = Number((acc || dec).dataset.accept || (acc || dec).dataset.decline);
+  try {
+    await api('POST', `/invites/${id}/${acc ? 'accept' : 'decline'}`);
+    await loadLists();
+    if (acc) setView({ type: 'list', id });
+  } catch (err) { fail(err); }
+}, true);
 $('#user-lists').onclick = onListClick;
 
 // list drag-reorder + drop tasks onto lists
@@ -623,7 +637,7 @@ $('#list-menu-btn').onclick = () => {
   const owner = l.owner_id === S.me.id;
   const done = S.tasks.filter((t) => t.completed).length;
   const c = openModal(`<h2>${esc(l.is_inbox ? 'Inbox' : l.name)}</h2><div class="menu-list">
-    ${l.is_inbox ? '' : `<button data-a="rename">${ic('pencil')}Edit name, emoji and color</button><button data-a="share">${ic('user-plus')}Share list</button>`}
+    ${l.is_inbox ? '' : `${owner ? `<button data-a="rename">${ic('pencil')}Edit name, emoji and color</button>` : ''}<button data-a="share">${ic(owner ? 'user-plus' : 'users')}${owner ? 'Share list' : 'See who’s on this list'}</button>`}
     ${done ? `<button data-a="clear">${ic('eraser')}Delete ${done} completed to-do${done > 1 ? 's' : ''}</button>` : ''}
     ${l.is_inbox ? '' : owner ? `<button data-a="delete" class="danger">${ic('trash-2')}Delete list</button>` : `<button data-a="leave" class="danger">${ic('door-open')}Leave list</button>`}
     </div><div class="actions"><button class="btn" id="lm-close">Close</button></div>`);
@@ -643,17 +657,19 @@ $('#share-btn').onclick = () => shareModal(S.view.id);
 function shareModal(listId) {
   const l = listById(listId); if (!l) return;
   const owner = l.owner_id === S.me.id;
-  const c = openModal(`<h2>Share "${esc(l.name)}"</h2>
-    <div>${l.members.map((m) => `<div class="member"><span class="avatar">${esc(m.username[0])}</span><span class="name">${esc(m.username)}${m.id === l.owner_id ? ' <span class="muted small">owner</span>' : ''}</span>
-      ${owner && m.id !== l.owner_id ? `<button class="link" data-rm="${m.id}">Remove</button>` : ''}</div>`).join('')}</div>
-    <form class="inline" id="sh-form"><input id="sh-user" placeholder="Username" autocapitalize="none" required><button class="btn primary">Add</button></form>
+  const row = (m, label, action) => `<div class="member"><span class="avatar">${esc(m.username[0])}</span><span class="name">${esc(m.username)}${label ? ` <span class="muted small">${label}</span>` : ''}</span>${action}</div>`;
+  const c = openModal(`<h2>${owner ? 'Share' : 'People on'} "${esc(l.name)}"</h2>
+    <div>${l.members.map((m) => row(m, m.id === l.owner_id ? 'owner' : '', owner && m.id !== l.owner_id ? `<button class="link" data-rm="${m.id}">Remove</button>` : '')).join('')}
+    ${(l.invited || []).map((m) => row(m, 'invited, hasn’t joined yet', `<button class="link" data-rm="${m.id}">Cancel</button>`)).join('')}</div>
+    ${owner ? `<form class="inline" id="sh-form"><input id="sh-user" placeholder="Their username" autocapitalize="none" required><button class="btn primary">Invite</button></form>
+    <p class="muted small">They’ll see an invitation in their sidebar and can join or decline. Nothing on this list is visible to them until they join.</p>` : '<p class="muted small">Only the list owner can invite people.</p>'}
     <p class="err" id="sh-err"></p><div class="actions"><button class="btn" id="sh-close">Done</button></div>`);
   $('#sh-close', c).onclick = closeModal;
-  $('#sh-form', c).onsubmit = async (e) => {
+  $('#sh-form', c)?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    try { await api('POST', `/lists/${l.id}/members`, { username: $('#sh-user', c).value.trim() }); await loadLists(); shareModal(l.id); }
+    try { const r = await api('POST', `/lists/${l.id}/members`, { username: $('#sh-user', c).value.trim() }); await loadLists(); shareModal(l.id); toast(r.message || 'Invite sent'); }
     catch (err) { $('#sh-err', c).textContent = err.message; }
-  };
+  });
   c.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => {
     try { await api('DELETE', `/lists/${l.id}/members/${b.dataset.rm}`); await loadLists(); shareModal(l.id); } catch (err) { $('#sh-err', c).textContent = err.message; }
   });
@@ -1012,8 +1028,8 @@ function listMenuItems(id) {
   if (!l || l.is_inbox) return [];
   const owner = l.owner_id === S.me.id;
   return [
-    { icon: 'pencil', label: 'Edit name, emoji and color', run: () => listModal(l) },
-    { icon: 'user-plus', label: 'Share list', run: () => shareModal(l.id) },
+    ...(owner ? [{ icon: 'pencil', label: 'Edit name, emoji and color', run: () => listModal(l) }] : []),
+    { icon: owner ? 'user-plus' : 'users', label: owner ? 'Share list' : 'See who’s on this list', run: () => shareModal(l.id) },
     ...(S.view.type === 'list' && S.view.id === l.id && S.tasks.some((t) => t.completed) ? [{ icon: 'eraser', label: 'Delete completed to-dos', run: () => {
       const n = S.tasks.filter((t) => t.completed).length;
       confirmModal(`Delete ${n} completed to-do${n > 1 ? 's' : ''}?`, 'This can’t be undone.', 'Delete', async () => { await api('DELETE', `/lists/${l.id}/completed`); await loadTasks(); });
