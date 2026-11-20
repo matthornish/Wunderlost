@@ -84,7 +84,8 @@ function notifyUsers(userIds, payload = { type: 'change' }) {
   const msg = `data: ${JSON.stringify(payload)}\n\n`;
   for (const uid of new Set(userIds)) for (const res of clients.get(uid) || []) res.write(msg);
 }
-const listMemberIds = (listId) => db.prepare('SELECT user_id FROM list_members WHERE list_id = ?').all(listId).map((r) => r.user_id);
+// Active members only; invited users get no data, no live updates and no reminders until they accept.
+const listMemberIds = (listId) => db.prepare("SELECT user_id FROM list_members WHERE list_id = ? AND status = 'active'").all(listId).map((r) => r.user_id);
 const notifyList = (listId) => notifyUsers(listMemberIds(listId));
 
 app.get('/api/events', auth, (req, res) => {
@@ -99,12 +100,12 @@ app.get('/api/events', auth, (req, res) => {
 
 // ---------- access checks ----------
 function requireMember(userId, listId) {
-  const row = db.prepare('SELECT l.* FROM lists l JOIN list_members m ON m.list_id = l.id WHERE l.id = ? AND m.user_id = ?').get(listId, userId);
+  const row = db.prepare("SELECT l.* FROM lists l JOIN list_members m ON m.list_id = l.id AND m.status = 'active' WHERE l.id = ? AND m.user_id = ?").get(listId, userId);
   if (!row) throw new HttpError(404, 'List not found');
   return row;
 }
 function requireTask(userId, taskId) {
-  const t = db.prepare('SELECT t.* FROM tasks t JOIN list_members m ON m.list_id = t.list_id WHERE t.id = ? AND m.user_id = ?').get(taskId, userId);
+  const t = db.prepare("SELECT t.* FROM tasks t JOIN list_members m ON m.list_id = t.list_id AND m.status = 'active' WHERE t.id = ? AND m.user_id = ?").get(taskId, userId);
   if (!t) throw new HttpError(404, 'Task not found');
   return t;
 }
@@ -258,12 +259,20 @@ function listsFor(userId) {
   const lists = db.prepare(`
     SELECT l.id, l.name, l.owner_id, l.is_inbox, l.color, l.emoji, m.position,
       (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.completed = 0) AS open_count
-    FROM lists l JOIN list_members m ON m.list_id = l.id AND m.user_id = ?
+    FROM lists l JOIN list_members m ON m.list_id = l.id AND m.user_id = ? AND m.status = 'active'
     ORDER BY l.is_inbox DESC, m.position, l.id`).all(userId);
-  const memStmt = db.prepare('SELECT u.id, u.username FROM list_members m JOIN users u ON u.id = m.user_id WHERE m.list_id = ? ORDER BY u.username');
-  for (const l of lists) l.members = memStmt.all(l.id);
+  const memStmt = db.prepare("SELECT u.id, u.username FROM list_members m JOIN users u ON u.id = m.user_id WHERE m.list_id = ? AND m.status = 'active' ORDER BY u.username");
+  const invStmt = db.prepare("SELECT u.id, u.username FROM list_members m JOIN users u ON u.id = m.user_id WHERE m.list_id = ? AND m.status = 'invited' ORDER BY u.username");
+  for (const l of lists) {
+    l.members = memStmt.all(l.id);
+    if (l.owner_id === userId) l.invited = invStmt.all(l.id); // only the owner sees pending invites
+  }
   return lists;
 }
+const invitesFor = (userId) => db.prepare(`
+  SELECT l.id, l.name, l.emoji, l.color, o.username AS owner, (SELECT COUNT(*) FROM tasks t WHERE t.list_id = l.id AND t.completed = 0) AS open_count
+  FROM list_members m JOIN lists l ON l.id = m.list_id JOIN users o ON o.id = l.owner_id
+  WHERE m.user_id = ? AND m.status = 'invited' ORDER BY l.name`).all(userId);
 
 app.get('/api/lists', auth, (req, res) => {
   const t = today(), week = addDays(t, 6);
@@ -273,9 +282,9 @@ app.get('/api/lists', auth, (req, res) => {
       SUM(CASE WHEN t.due_date IS NOT NULL AND t.due_date <= ? THEN 1 ELSE 0 END) AS today,
       SUM(CASE WHEN t.due_date IS NOT NULL AND t.due_date <= ? THEN 1 ELSE 0 END) AS week,
       SUM(CASE WHEN t.assigned_to = ? THEN 1 ELSE 0 END) AS assigned
-    FROM tasks t JOIN list_members m ON m.list_id = t.list_id AND m.user_id = ?
+    FROM tasks t JOIN list_members m ON m.list_id = t.list_id AND m.user_id = ? AND m.status = 'active'
     WHERE t.completed = 0`).get(t, week, req.user.id, req.user.id);
-  res.json({ lists: listsFor(req.user.id), smart: counts });
+  res.json({ lists: listsFor(req.user.id), smart: counts, invites: invitesFor(req.user.id) });
 });
 
 app.post('/api/lists', auth, wrap((req, res) => {
@@ -318,6 +327,7 @@ function listStyle(body, sets) {
 app.put('/api/lists/:id', auth, wrap((req, res) => {
   const l = requireMember(req.user.id, req.params.id);
   if (l.is_inbox) throw new HttpError(400, "Inbox can't be edited");
+  if (l.owner_id !== req.user.id) throw new HttpError(403, 'Only the list owner can rename or restyle it');
   const sets = {};
   if ('name' in req.body) {
     sets.name = str(req.body.name, 100);
@@ -333,21 +343,44 @@ app.put('/api/lists/:id', auth, wrap((req, res) => {
 app.delete('/api/lists/:id', auth, wrap((req, res) => {
   const l = requireMember(req.user.id, req.params.id);
   if (l.is_inbox) throw new HttpError(400, "Inbox can't be deleted");
-  const members = listMemberIds(l.id);
+  const members = db.prepare('SELECT user_id FROM list_members WHERE list_id = ?').all(l.id).map((r) => r.user_id); // incl. pending invites
   if (l.owner_id === req.user.id) db.prepare('DELETE FROM lists WHERE id = ?').run(l.id);
   else db.prepare('DELETE FROM list_members WHERE list_id = ? AND user_id = ?').run(l.id, req.user.id); // leave shared list
   notifyUsers(members);
   res.json({ ok: true });
 }));
 
+// Only the owner invites. The invitee sees the list's name and owner, and must accept before
+// they can see its to-dos or get its reminders. The reply is the same whether or not the
+// username exists, so this can't be used to discover accounts.
 app.post('/api/lists/:id/members', auth, wrap((req, res) => {
   const l = requireMember(req.user.id, req.params.id);
   if (l.is_inbox) throw new HttpError(400, "Inbox can't be shared");
+  if (l.owner_id !== req.user.id) throw new HttpError(403, 'Only the list owner can invite people');
   const u = db.prepare('SELECT id FROM users WHERE username = ?').get(str(req.body.username, 40));
-  if (!u) throw new HttpError(404, 'No user with that username');
-  const pos = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM list_members WHERE user_id = ?').get(u.id).p;
-  db.prepare('INSERT OR IGNORE INTO list_members (list_id, user_id, position) VALUES (?, ?, ?)').run(l.id, u.id, pos);
-  notifyList(l.id);
+  if (u && u.id !== req.user.id) {
+    const pending = db.prepare("SELECT COUNT(*) AS n FROM list_members WHERE list_id = ? AND status = 'invited'").get(l.id).n;
+    if (pending >= 20) throw new HttpError(429, 'Too many pending invites on this list');
+    const r = db.prepare("INSERT OR IGNORE INTO list_members (list_id, user_id, position, status, invited_by) VALUES (?, ?, 0, 'invited', ?)").run(l.id, u.id, req.user.id);
+    if (r.changes) notifyUsers([u.id]);
+  }
+  notifyUsers([req.user.id]);
+  res.json({ ok: true, message: 'If that username exists, they have been invited.' });
+}));
+
+app.post('/api/invites/:listId/accept', auth, wrap((req, res) => {
+  const pos = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM list_members WHERE user_id = ?').get(req.user.id).p;
+  const r = db.prepare("UPDATE list_members SET status = 'active', position = ? WHERE list_id = ? AND user_id = ? AND status = 'invited'").run(pos, req.params.listId, req.user.id);
+  if (!r.changes) throw new HttpError(404, 'Invite not found');
+  notifyList(Number(req.params.listId));
+  res.json({ ok: true });
+}));
+
+app.post('/api/invites/:listId/decline', auth, wrap((req, res) => {
+  const owner = db.prepare('SELECT owner_id FROM lists WHERE id = ?').get(req.params.listId)?.owner_id;
+  const r = db.prepare("DELETE FROM list_members WHERE list_id = ? AND user_id = ? AND status = 'invited'").run(req.params.listId, req.user.id);
+  if (!r.changes) throw new HttpError(404, 'Invite not found');
+  notifyUsers([req.user.id, owner]);
   res.json({ ok: true });
 }));
 
@@ -356,7 +389,7 @@ app.delete('/api/lists/:id/members/:userId', auth, wrap((req, res) => {
   const target = Number(req.params.userId);
   if (l.owner_id !== req.user.id && target !== req.user.id) throw new HttpError(403, 'Only the owner can remove others');
   if (target === l.owner_id) throw new HttpError(400, "Owner can't be removed; delete the list instead");
-  const members = listMemberIds(l.id);
+  const members = [...listMemberIds(l.id), target];
   db.prepare('DELETE FROM list_members WHERE list_id = ? AND user_id = ?').run(l.id, target);
   db.prepare('UPDATE tasks SET assigned_to = NULL WHERE list_id = ? AND assigned_to = ?').run(l.id, target);
   notifyUsers(members);
@@ -375,7 +408,7 @@ function hydrate(tasks) {
 }
 
 const TASK_SELECT = `SELECT t.*, l.name AS list_name, u.username AS assigned_name
-  FROM tasks t JOIN list_members m ON m.list_id = t.list_id AND m.user_id = ?
+  FROM tasks t JOIN list_members m ON m.list_id = t.list_id AND m.user_id = ? AND m.status = 'active'
   JOIN lists l ON l.id = t.list_id LEFT JOIN users u ON u.id = t.assigned_to`;
 
 app.get('/api/tasks', auth, wrap((req, res) => {
