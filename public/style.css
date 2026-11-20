@@ -339,6 +339,8 @@ input, select, textarea { font: inherit; color: inherit; }
 .ctx-menu button.danger, .ctx-menu button.danger .ico { color: var(--danger); }
 .ctx-menu .chev-r { transform: rotate(-90deg); }
 .ctx-title { padding: 8px 12px 6px; font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-hint { font-style: normal; font-size: 13px; color: var(--muted); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-menu .ctx-check { color: var(--accent); }
 .ctx-emoji { width: 20px; text-align: center; font-size: 17px; }
 .ctx-layer.sheet { background: var(--scrim); }
 .ctx-layer.sheet .ctx-menu {

@@ -431,6 +431,20 @@ app.post('/api/tasks/:id/toggle', auth, wrap((req, res) => {
   res.json({ rolled, task: hydrate(db.prepare(`${TASK_SELECT} WHERE t.id = ?`).all(req.user.id, t.id))[0] });
 }));
 
+app.post('/api/tasks/:id/duplicate', auth, wrap((req, res) => {
+  const t = requireTask(req.user.id, req.params.id);
+  const newId = db.transaction(() => {
+    const pos = db.prepare('SELECT COALESCE(MIN(position), 0) - 1 AS p FROM tasks WHERE list_id = ? AND completed = 0').get(t.list_id).p;
+    const id = db.prepare(`INSERT INTO tasks (list_id, title, notes, due_date, recurrence, starred, assigned_to, position, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(t.list_id, t.title, t.notes, t.due_date, t.recurrence, t.starred, t.assigned_to, pos, req.user.id).lastInsertRowid;
+    const ins = db.prepare('INSERT INTO subtasks (task_id, title, completed, position) VALUES (?, ?, 0, ?)');
+    for (const st of db.prepare('SELECT * FROM subtasks WHERE task_id = ? ORDER BY position, id').all(t.id)) ins.run(id, st.title, st.position);
+    return id;
+  })();
+  notifyList(t.list_id);
+  res.json(hydrate(db.prepare(`${TASK_SELECT} WHERE t.id = ?`).all(req.user.id, newId))[0]);
+}));
+
 app.delete('/api/tasks/:id', auth, wrap((req, res) => {
   const t = requireTask(req.user.id, req.params.id);
   db.prepare('DELETE FROM tasks WHERE id = ?').run(t.id);

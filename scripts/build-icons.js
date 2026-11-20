@@ -8,7 +8,7 @@ const ICONS = [
   'ellipsis', 'menu', 'plus', 'x', 'trash-2', 'bell', 'repeat', 'notebook-pen', 'list-checks',
   'folder-input', 'user-round', 'chevron-down', 'panel-right-close', 'log-out', 'check', 'sun', 'moon',
   'monitor', 'palette', 'lock-keyhole', 'settings', 'pencil', 'user-plus', 'eraser', 'door-open',
-  'volume-2', 'shield', 'circle-alert',
+  'volume-2', 'shield', 'circle-alert', 'copy',
 ];
 
 const dir = path.join(__dirname, '..', 'node_modules', 'lucide-static', 'icons');
