@@ -35,7 +35,11 @@ Format: `type: short imperative summary` (lowercase, no period). Add a body when
 
 - No test suite exists yet. Describe in the PR how a change was verified.
 - Every `/api` route that touches a list, task or subtask must go through `requireMember` / `requireTask` / `requireSub` so users can only reach lists they belong to. Never trust client-sent IDs.
-- Preserve the existing hardening: mutating API calls must be `application/json` (CSRF guard), login rate limiting, bcrypt password hashes, HttpOnly + SameSite session cookies, input length limits via `str()`.
+- Preserve the existing hardening: mutating API calls must be `application/json` (CSRF guard); sign-in limits per IP and per username; scrypt password hashing in `password.js` (async, concurrency-capped; legacy bcrypt only verified, then upgraded); session tokens stored as SHA-256; HttpOnly + SameSite session cookies; first-run setup code; `trust proxy` limited to private networks (`TRUST_PROXY`); input length limits via `str()`.
+- Push endpoints must pass `validPushEndpoint` (known push services only) — never send to user-supplied URLs.
+- List membership has a `status`: only `active` members see a list, get live updates or reminders, or can be assigned. Only the owner invites, renames or restyles a list.
+- Keep the security headers and CSP in `server.js`: no inline scripts (put bootstrap code in a file like `public/theme.js`), no new external origins.
+- New per-user resources need a cap in `LIMITS`.
 - Schema changes go in `db.js` and must be additive and safe to run against an existing database (`CREATE ... IF NOT EXISTS`, guarded `ALTER TABLE`). Users' data must survive an image update.
 - After any write to lists, tasks, subtasks or members, call `notifyList` / `notifyUsers` so other devices refresh.
 - Keep `package-lock.json` in sync with `package.json` (`npm install`, commit both).
