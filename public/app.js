@@ -117,7 +117,9 @@ function showAuthForm(mode, st) {
   $('#auth-err').textContent = '';
   const sub = $('#auth-sub'), btn = $('#auth-btn'), tog = $('#auth-toggle');
   $('#auth-pass').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-  if (mode === 'setup') { sub.textContent = 'First run — create the admin account.'; btn.textContent = 'Create admin account'; tog.classList.add('hidden'); }
+  $('#auth-code').classList.toggle('hidden', mode !== 'setup');
+  $('#auth-code').required = mode === 'setup';
+  if (mode === 'setup') { sub.textContent = 'First run: create the admin account. You need the setup code printed in the container log (docker logs wunderlost).'; btn.textContent = 'Create admin account'; tog.classList.add('hidden'); }
   else if (mode === 'register') { sub.textContent = 'Create an account.'; btn.textContent = 'Sign up'; tog.textContent = 'Have an account? Sign in'; tog.classList.remove('hidden'); }
   else { sub.textContent = ''; btn.textContent = 'Sign in'; tog.textContent = 'Create an account'; tog.classList.toggle('hidden', !st.registrationOpen); }
   $('#auth-user').focus();
@@ -128,7 +130,9 @@ $('#auth-form').onsubmit = async (e) => {
   $('#auth-err').textContent = '';
   try {
     const body = { username: $('#auth-user').value, password: $('#auth-pass').value };
-    await api('POST', authMode === 'login' ? '/auth/login' : '/auth/register', body);
+    if (authMode === 'setup') body.setup_code = $('#auth-code').value;
+    $('#auth-btn').disabled = true;
+    await api('POST', authMode === 'login' ? '/auth/login' : '/auth/register', body).finally(() => { $('#auth-btn').disabled = false; });
     const st = await api('GET', '/auth/status');
     S.me = st.user; $('#auth-pass').value = '';
     startApp();

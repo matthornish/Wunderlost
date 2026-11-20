@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
-const bcrypt = require('bcryptjs');
+const { hashPassword, verifyPassword, needsRehash, dummyVerify } = require('./password');
 const webpush = require('web-push');
 const db = require('./db');
 const { RULES, today, addDays, nextOccurrence } = require('./recur');
@@ -22,7 +22,10 @@ if (!vapid.publicKey || !vapid.privateKey) {
 webpush.setVapidDetails(VAPID_SUBJECT, vapid.publicKey, vapid.privateKey);
 
 const app = express();
-app.set('trust proxy', true);
+// Which proxies may set X-Forwarded-For. Default: loopback and private networks (a reverse
+// proxy on the same host or LAN). Set TRUST_PROXY to your proxy's IP for a tighter setting.
+// Trusting everything would let clients fake their IP and dodge the sign-in limits.
+app.set('trust proxy', process.env.TRUST_PROXY || 'loopback, linklocal, uniquelocal');
 app.disable('x-powered-by');
 const jsonSmall = express.json({ limit: '256kb' });
 const jsonPhoto = express.json({ limit: '12mb' }); // background photo upload only
@@ -36,14 +39,18 @@ const bool = (v) => (v ? 1 : 0);
 const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const toISO = (v) => { const d = new Date(v); if (isNaN(d)) throw new HttpError(400, 'Bad date'); return d.toISOString(); };
 
-function parseCookies(req) {
-  const out = {};
-  (req.headers.cookie || '').split(';').forEach((p) => {
-    const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
-  });
-  return out;
+// Only our cookie is read; a malformed cookie from another app on the domain is ignored.
+function sessionToken(req) {
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === 'wl_session') {
+      const v = part.slice(i + 1).trim();
+      return /^[A-Za-z0-9_-]{20,100}$/.test(v) ? v : null;
+    }
+  }
+  return null;
 }
+const tokenHash = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 function setSessionCookie(req, res, token, maxAgeSec) {
   const parts = [`wl_session=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${maxAgeSec}`];
@@ -61,9 +68,9 @@ app.use('/api', (req, res, next) => {
 
 // Resolve session
 app.use('/api', (req, res, next) => {
-  const token = parseCookies(req).wl_session;
+  const token = sessionToken(req);
   if (token) {
-    const row = db.prepare(`SELECT u.id, u.username, u.is_admin, u.background, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(token);
+    const row = db.prepare(`SELECT u.id, u.username, u.is_admin, u.background, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(tokenHash(token));
     if (row && row.expires_at > Date.now()) req.user = { id: row.id, username: row.username, is_admin: !!row.is_admin, background: row.background };
   }
   next();
@@ -103,23 +110,49 @@ function requireTask(userId, taskId) {
 }
 
 // ---------- auth ----------
-const loginAttempts = new Map(); // ip -> {count, until}
-function checkRate(ip) {
-  const a = loginAttempts.get(ip);
-  if (a && a.until > Date.now() && a.count >= 10) throw new HttpError(429, 'Too many attempts, try again in a few minutes');
+// Failure counters per client IP and per username. The username limit stops guessing one
+// account from many IPs; existing sign-ins on other devices keep working while it's locked.
+function limiter(max, windowMs) {
+  const m = new Map();
+  return {
+    blocked: (k) => { const a = m.get(k); return !!a && a.until > Date.now() && a.count >= max; },
+    hit: (k) => { const a = m.get(k); if (!a || a.until < Date.now()) m.set(k, { count: 1, until: Date.now() + windowMs }); else a.count++; },
+    clear: (k) => m.delete(k),
+    prune: () => { const now = Date.now(); for (const [k, a] of m) if (a.until < now) m.delete(k); },
+  };
 }
-function failRate(ip) {
-  const a = loginAttempts.get(ip);
-  if (!a || a.until < Date.now()) loginAttempts.set(ip, { count: 1, until: Date.now() + 10 * 60000 });
-  else a.count++;
+const ipFails = limiter(10, 10 * 60000);
+const userFails = limiter(10, 15 * 60000);
+const registerHits = limiter(5, 60 * 60000);
+setInterval(() => { ipFails.prune(); userFails.prune(); registerHits.prune(); }, 5 * 60000).unref();
+const TOO_MANY = 'Too many attempts, try again in a few minutes';
+
+function checkPassword(password) {
+  if (typeof password !== 'string' || password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters');
+  if (password.length > 256) throw new HttpError(400, 'Password must be 256 characters or fewer');
+  return password;
 }
 
-function createUser(username, password, isAdmin) {
+// First-run protection: until the first account exists, creating it needs a one-time setup
+// code printed in the container log, so whoever finds a fresh instance first can't claim it.
+let setupCode = null;
+function ensureSetupCode() {
+  if (db.prepare('SELECT 1 FROM users LIMIT 1').get()) { setupCode = null; return; }
+  if (!setupCode) {
+    const raw = crypto.randomBytes(5).toString('hex').toUpperCase();
+    setupCode = `${raw.slice(0, 5)}-${raw.slice(5)}`;
+    console.log(`\n  First-run setup code: ${setupCode}\n  Enter it on the sign-up page to create the admin account.\n`);
+  }
+}
+ensureSetupCode();
+
+async function createUser(username, password, isAdmin) {
   username = str(username, 40);
   if (!/^[A-Za-z0-9_.-]{2,40}$/.test(username)) throw new HttpError(400, 'Username: 2-40 letters, numbers, . _ -');
-  if (typeof password !== 'string' || password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters');
+  checkPassword(password);
   if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw new HttpError(409, 'Username taken');
-  const hash = bcrypt.hashSync(password, 12);
+  const hash = await hashPassword(password);
+  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) throw new HttpError(409, 'Username taken');
   return db.transaction(() => {
     const uid = db.prepare('INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, hash, bool(isAdmin)).lastInsertRowid;
     const lid = db.prepare('INSERT INTO lists (name, owner_id, is_inbox) VALUES (?, ?, 1)').run('Inbox', uid).lastInsertRowid;
@@ -130,7 +163,7 @@ function createUser(username, password, isAdmin) {
 
 function startSession(req, res, userId) {
   const token = crypto.randomBytes(32).toString('base64url');
-  db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, Date.now() + SESSION_DAYS * 86400000);
+  db.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)').run(tokenHash(token), userId, Date.now() + SESSION_DAYS * 86400000);
   setSessionCookie(req, res, token, SESSION_DAYS * 86400);
 }
 
@@ -144,40 +177,56 @@ app.get('/api/auth/status', (req, res) => {
   res.json({ user, setupNeeded: !hasUsers, registrationOpen: !hasUsers || ALLOW_REGISTRATION });
 });
 
-app.post('/api/auth/register', wrap((req, res) => {
+app.post('/api/auth/register', wrap(async (req, res) => {
+  if (registerHits.blocked(req.ip)) throw new HttpError(429, TOO_MANY);
+  registerHits.hit(req.ip);
   const first = !db.prepare('SELECT 1 FROM users LIMIT 1').get();
   if (!first && !ALLOW_REGISTRATION) throw new HttpError(403, 'Registration is closed. Ask the admin for an account.');
-  const uid = createUser(req.body.username, req.body.password, first);
+  if (first) {
+    ensureSetupCode();
+    const given = String(req.body.setup_code || '').trim().toUpperCase();
+    const ok = given.length === setupCode.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(setupCode));
+    if (!ok) throw new HttpError(403, 'Wrong setup code. Find it in the container log (docker logs wunderlost).');
+  }
+  const uid = await createUser(req.body.username, req.body.password, first);
+  if (first) setupCode = null;
   startSession(req, res, uid);
   res.json({ ok: true });
 }));
 
-app.post('/api/auth/login', wrap((req, res) => {
-  checkRate(req.ip);
-  const u = db.prepare('SELECT * FROM users WHERE username = ?').get(str(req.body.username, 40));
-  if (!u || !bcrypt.compareSync(String(req.body.password || ''), u.password_hash)) {
-    failRate(req.ip);
+app.post('/api/auth/login', wrap(async (req, res) => {
+  const username = str(req.body.username, 40).toLowerCase();
+  const password = String(req.body.password || '').slice(0, 256);
+  if (ipFails.blocked(req.ip) || userFails.blocked(username)) throw new HttpError(429, TOO_MANY);
+  const u = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  const ok = u ? await verifyPassword(password, u.password_hash) : await dummyVerify(password);
+  if (!ok) {
+    ipFails.hit(req.ip); userFails.hit(username);
     throw new HttpError(401, 'Wrong username or password');
   }
-  loginAttempts.delete(req.ip);
+  ipFails.clear(req.ip); userFails.clear(username);
+  if (needsRehash(u.password_hash)) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(password), u.id);
   startSession(req, res, u.id);
   res.json({ ok: true });
 }));
 
 app.post('/api/auth/logout', (req, res) => {
-  const token = parseCookies(req).wl_session;
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  const token = sessionToken(req);
+  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(tokenHash(token));
   setSessionCookie(req, res, '', 0);
   res.json({ ok: true });
 });
 
-app.put('/api/auth/password', auth, wrap((req, res) => {
+app.put('/api/auth/password', auth, wrap(async (req, res) => {
   const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!bcrypt.compareSync(String(req.body.current || ''), u.password_hash)) throw new HttpError(400, 'Current password is wrong');
-  if (typeof req.body.password !== 'string' || req.body.password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters');
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(req.body.password, 12), u.id);
-  const token = parseCookies(req).wl_session;
-  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(u.id, token);
+  if (userFails.blocked(u.username.toLowerCase())) throw new HttpError(429, TOO_MANY);
+  if (!(await verifyPassword(String(req.body.current || '').slice(0, 256), u.password_hash))) {
+    userFails.hit(u.username.toLowerCase());
+    throw new HttpError(400, 'Current password is wrong');
+  }
+  checkPassword(req.body.password);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(req.body.password), u.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(u.id, tokenHash(sessionToken(req)));
   res.json({ ok: true });
 }));
 
@@ -185,13 +234,13 @@ app.put('/api/auth/password', auth, wrap((req, res) => {
 app.get('/api/users', auth, admin, (req, res) => {
   res.json(db.prepare('SELECT id, username, is_admin, created_at FROM users ORDER BY username').all());
 });
-app.post('/api/users', auth, admin, wrap((req, res) => {
-  const id = createUser(req.body.username, req.body.password, !!req.body.is_admin);
+app.post('/api/users', auth, admin, wrap(async (req, res) => {
+  const id = await createUser(req.body.username, req.body.password, !!req.body.is_admin);
   res.json({ id });
 }));
-app.put('/api/users/:id/password', auth, admin, wrap((req, res) => {
-  if (typeof req.body.password !== 'string' || req.body.password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters');
-  const r = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(bcrypt.hashSync(req.body.password, 12), req.params.id);
+app.put('/api/users/:id/password', auth, admin, wrap(async (req, res) => {
+  checkPassword(req.body.password);
+  const r = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(req.body.password), req.params.id);
   if (!r.changes) throw new HttpError(404, 'No such user');
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
   res.json({ ok: true });
