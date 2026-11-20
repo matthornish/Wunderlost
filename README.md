@@ -54,7 +54,7 @@ or plain Docker:
 docker run -d --name wunderlost --restart unless-stopped -p 3000:3000 -e TZ=America/New_York -e VAPID_SUBJECT=mailto:you@example.com -v ./wunderlost-data:/data ghcr.io/matthornish/wunderlost:latest
 ```
 
-**3. Open it and create your account.** The first account becomes the admin and sign-up closes after that; add other people from **Settings → Manage users**.
+**3. Open it and create your account.** The first time, the sign-up page asks for a **setup code**: it's printed in the container log (`docker logs wunderlost`), so nobody who stumbles on a fresh install can claim it before you. The first account becomes the admin and sign-up closes after that; add other people from **Settings → Manage users**.
 
 **4. Put it behind HTTPS** by pointing your reverse proxy at port 3000.
 
@@ -80,6 +80,8 @@ Create the appdata folder first with `mkdir -p /mnt/user/appdata/wunderlost && c
 - **`VAPID_SUBJECT` must be a real `mailto:` or `https:` address**, or Apple's push service rejects every notification.
 - **Set `TZ`.** "Today", overdue and repeat dates use the container's timezone.
 - **Permissions:** if the container can't write to `/data`, it will crash on start. Fix the folder owner to match the container user.
+- **Reverse proxy and client IPs.** Sign-in limits use the client's IP from `X-Forwarded-For`, which is only trusted from proxies on loopback or private networks (the usual same-host or LAN reverse proxy). If your proxy connects from a public address, or you want it stricter, set `TRUST_PROXY` to the proxy's IP.
+- **Sharing needs consent.** Only a list's owner can invite people, and the invited person has to tap **Join** before they see the list or get its reminders.
 - **Live updates** use Server-Sent Events on `/api/events`. If shared-list changes only appear after a refresh, turn off response buffering for that path in your proxy.
 
 ## Configuration
@@ -90,6 +92,8 @@ Create the appdata folder first with `mkdir -p /mnt/user/appdata/wunderlost && c
 | `VAPID_SUBJECT` | `mailto:admin@example.com` | contact address sent to push services; set your own |
 | `ALLOW_REGISTRATION` | `false` | let anyone create an account after the first (admin) one |
 | `SESSION_DAYS` | `90` | how long a sign-in lasts |
+| `TRUST_PROXY` | `loopback, linklocal, uniquelocal` | which proxies may set `X-Forwarded-For` ([Express trust proxy syntax](https://expressjs.com/en/guide/behind-proxies.html)) |
+| `PUSH_ALLOWED_HOSTS` | (none) | extra push-service hostnames, comma-separated. Google, Apple, Mozilla and Microsoft are always allowed |
 | `SOURCE_URL` | this repo | the "Source code" link in Settings; **point it at your fork if you run a modified version** (AGPL section 13) |
 | `PORT` | `3000` | |
 | `DATA_DIR` | `/data` | |
