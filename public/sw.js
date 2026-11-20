@@ -1,5 +1,5 @@
 // Wunderlost service worker: app-shell cache (network-first) + push notifications.
-const CACHE = 'wunderlost-v1';
+const CACHE = 'wunderlost-v2';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

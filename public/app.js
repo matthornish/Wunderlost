@@ -644,7 +644,12 @@ async function settingsModal() {
     try { if (pushState.on) await disablePush(); else await enablePush(); settingsModal(); } catch (e) { err.textContent = e.message; }
   });
   $('#st-test', c)?.addEventListener('click', async () => {
-    try { const r = await api('POST', '/push/test'); toast(r.sent ? 'Test sent' : 'No devices subscribed'); } catch (e) { err.textContent = e.message; }
+    try {
+      const r = await api('POST', '/push/test');
+      if (!r.subs) err.textContent = 'The server has no devices registered for your account. Tap Disable, then Enable.';
+      else if (r.sent) toast(`Test sent to ${r.sent} device${r.sent > 1 ? 's' : ''}`);
+      else err.textContent = 'Push failed: ' + (r.errors[0] || 'unknown error') + ' (also in docker logs)';
+    } catch (e) { err.textContent = e.message; }
   });
   $('#st-pw', c).onsubmit = async (e) => {
     e.preventDefault();
@@ -710,7 +715,17 @@ async function registerSW() {
       const m = e.data?.type === 'open' && String(e.data.url || '').match(/task\/(\d+)/);
       if (m) openTaskFromLink(Number(m[1]));
     });
-  } catch (e) { console.warn('SW registration failed', e); }
+  } catch (e) { console.warn('SW registration failed', e); return; }
+  resyncPush();
+}
+// Self-heal: if this browser already has a push subscription, make sure the server has it too.
+async function resyncPush() {
+  try {
+    if (!('PushManager' in window) || Notification.permission !== 'granted') return;
+    const reg = swReg || await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await api('POST', '/push/subscribe', sub.toJSON());
+  } catch (e) { console.warn('push resync failed', e); }
 }
 const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);

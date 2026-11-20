@@ -458,11 +458,13 @@ app.post('/api/push/unsubscribe', auth, wrap((req, res) => {
   res.json({ ok: true });
 }));
 app.post('/api/push/test', auth, wrap(async (req, res) => {
-  const n = await pushToUser(req.user.id, { title: 'Wunderlost', body: 'Notifications are working.', url: '/' });
-  res.json({ sent: n });
+  const subs = db.prepare('SELECT COUNT(*) AS n FROM push_subs WHERE user_id = ?').get(req.user.id).n;
+  const errors = [];
+  const sent = await pushToUser(req.user.id, { title: 'Wunderlost', body: 'Notifications are working.', url: '/' }, errors);
+  res.json({ subs, sent, errors });
 }));
 
-async function pushToUser(userId, payload) {
+async function pushToUser(userId, payload, errors = []) {
   const subs = db.prepare('SELECT * FROM push_subs WHERE user_id = ?').all(userId);
   let sent = 0;
   await Promise.all(subs.map(async (s) => {
@@ -470,8 +472,10 @@ async function pushToUser(userId, payload) {
       await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), { TTL: 3600 });
       sent++;
     } catch (e) {
+      const msg = `${e.statusCode || ''} ${e.body || e.message}`.trim();
+      errors.push(msg);
       if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subs WHERE id = ?').run(s.id);
-      else console.error('push failed', e.statusCode, e.body || e.message);
+      console.error('push failed', msg);
     }
   }));
   return sent;
