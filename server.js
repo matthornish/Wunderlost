@@ -29,7 +29,7 @@ app.set('trust proxy', process.env.TRUST_PROXY || 'loopback, linklocal, uniquelo
 app.disable('x-powered-by');
 const jsonSmall = express.json({ limit: '256kb' });
 const jsonPhoto = express.json({ limit: '12mb' }); // background photo upload only
-app.use((req, res, next) => (req.path === '/api/me/background/photo' ? jsonPhoto : jsonSmall)(req, res, next));
+app.use((req, res, next) => (req.path === '/api/me/background/photo' ? next() : jsonSmall(req, res, next))); // photo: parsed after auth
 
 // ---------- helpers ----------
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -78,6 +78,31 @@ app.use('/api', (req, res, next) => {
 const auth = (req, res, next) => (req.user ? next() : res.status(401).json({ error: 'Not logged in' }));
 const admin = (req, res, next) => (req.user?.is_admin ? next() : res.status(403).json({ error: 'Admin only' }));
 
+// Generous caps so one account can't fill the disk or make lists unloadable.
+const LIMITS = { lists: 500, tasks: 5000, subtasks: 200 };
+
+// ---------- security headers ----------
+// Everything is served from this origin; the only inline code is style attributes (list colors,
+// backgrounds). No framing (clickjacking), no MIME sniffing, no referrers to other sites.
+const CSP = [
+  "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
+  "font-src 'self'", "connect-src 'self'", "manifest-src 'self'", "worker-src 'self'",
+  "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
+].join('; ');
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': CSP,
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'same-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+  });
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
+  if (req.path.startsWith('/api/') && req.path !== '/api/me/background/photo') res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // ---------- realtime (SSE) ----------
 const clients = new Map(); // userId -> Set(res)
 function notifyUsers(userIds, payload = { type: 'change' }) {
@@ -93,9 +118,16 @@ app.get('/api/events', auth, (req, res) => {
   res.flushHeaders();
   res.write('retry: 5000\n\n');
   if (!clients.has(req.user.id)) clients.set(req.user.id, new Set());
-  clients.get(req.user.id).add(res);
+  const mine = clients.get(req.user.id);
+  if (mine.size >= 10) { const oldest = mine.values().next().value; mine.delete(oldest); oldest.end(); } // cap open tabs/devices per user
+  mine.add(res);
   const ping = setInterval(() => res.write(': ping\n\n'), 25000);
-  req.on('close', () => { clearInterval(ping); clients.get(req.user.id)?.delete(res); });
+  req.on('close', () => {
+    clearInterval(ping);
+    const set = clients.get(req.user.id);
+    set?.delete(res);
+    if (set && !set.size) clients.delete(req.user.id);
+  });
 });
 
 // ---------- access checks ----------
@@ -290,6 +322,7 @@ app.get('/api/lists', auth, (req, res) => {
 app.post('/api/lists', auth, wrap((req, res) => {
   const name = str(req.body.name, 100);
   if (!name) throw new HttpError(400, 'Name required');
+  if (db.prepare('SELECT COUNT(*) AS n FROM lists WHERE owner_id = ?').get(req.user.id).n >= LIMITS.lists) throw new HttpError(400, `You can have up to ${LIMITS.lists} lists`);
   const id = db.transaction(() => {
     const style = {};
     listStyle(req.body, style);
@@ -400,7 +433,11 @@ app.delete('/api/lists/:id/members/:userId', auth, wrap((req, res) => {
 function hydrate(tasks) {
   if (!tasks.length) return tasks;
   const ids = tasks.map((t) => t.id);
-  const subs = db.prepare(`SELECT * FROM subtasks WHERE task_id IN (${ids.map(() => '?').join(',')}) ORDER BY position, id`).all(...ids);
+  const subs = [];
+  for (let i = 0; i < ids.length; i += 500) { // stay well under SQLite's bound-parameter limit
+    const chunk = ids.slice(i, i + 500);
+    subs.push(...db.prepare(`SELECT * FROM subtasks WHERE task_id IN (${chunk.map(() => '?').join(',')}) ORDER BY position, id`).all(...chunk));
+  }
   const byTask = {};
   for (const s of subs) (byTask[s.task_id] ||= []).push(s);
   for (const t of tasks) t.subtasks = byTask[t.id] || [];
@@ -439,6 +476,7 @@ app.post('/api/tasks', auth, wrap((req, res) => {
   requireMember(req.user.id, listId);
   const title = str(req.body.title, 500);
   if (!title) throw new HttpError(400, 'Title required');
+  if (db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE list_id = ?').get(listId).n >= LIMITS.tasks) throw new HttpError(400, `A list can hold up to ${LIMITS.tasks} to-dos. Delete some completed ones first.`);
   const pos = db.prepare('SELECT COALESCE(MIN(position), 0) - 1 AS p FROM tasks WHERE list_id = ? AND completed = 0').get(listId).p; // new tasks on top
   const id = db.prepare(`INSERT INTO tasks (list_id, title, starred, due_date, position, created_by) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(listId, title, bool(req.body.starred), isDate(req.body.due_date) ? req.body.due_date : null, pos, req.user.id).lastInsertRowid;
@@ -515,6 +553,7 @@ app.post('/api/tasks/:id/toggle', auth, wrap((req, res) => {
 
 app.post('/api/tasks/:id/duplicate', auth, wrap((req, res) => {
   const t = requireTask(req.user.id, req.params.id);
+  if (db.prepare('SELECT COUNT(*) AS n FROM tasks WHERE list_id = ?').get(t.list_id).n >= LIMITS.tasks) throw new HttpError(400, `A list can hold up to ${LIMITS.tasks} to-dos. Delete some completed ones first.`);
   const newId = db.transaction(() => {
     const pos = db.prepare('SELECT COALESCE(MIN(position), 0) - 1 AS p FROM tasks WHERE list_id = ? AND completed = 0').get(t.list_id).p;
     const id = db.prepare(`INSERT INTO tasks (list_id, title, notes, due_date, recurrence, starred, assigned_to, position, created_by)
@@ -546,6 +585,7 @@ app.post('/api/tasks/:id/subtasks', auth, wrap((req, res) => {
   const t = requireTask(req.user.id, req.params.id);
   const title = str(req.body.title, 500);
   if (!title) throw new HttpError(400, 'Title required');
+  if (db.prepare('SELECT COUNT(*) AS n FROM subtasks WHERE task_id = ?').get(t.id).n >= LIMITS.subtasks) throw new HttpError(400, `A to-do can have up to ${LIMITS.subtasks} subtasks`);
   const pos = db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS p FROM subtasks WHERE task_id = ?').get(t.id).p;
   const id = db.prepare('INSERT INTO subtasks (task_id, title, position) VALUES (?, ?, ?)').run(t.id, title, pos).lastInsertRowid;
   notifyList(t.list_id);
@@ -594,7 +634,7 @@ app.put('/api/me/background', auth, wrap((req, res) => {
   res.json({ background: next });
 }));
 
-app.post('/api/me/background/photo', auth, wrap((req, res) => {
+app.post('/api/me/background/photo', auth, jsonPhoto, wrap((req, res) => {
   const m = String(req.body.image || '').match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
   if (!m) throw new HttpError(400, 'Send a JPEG, PNG or WebP image');
   const buf = Buffer.from(m[2], 'base64');
@@ -737,4 +777,5 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Server error' });
 });
 
+if (!process.env.VAPID_SUBJECT) console.warn('Warning: VAPID_SUBJECT is not set. Set it to a mailto: address you own, or Apple devices will reject push notifications.');
 app.listen(PORT, () => console.log(`Wunderlost listening on :${PORT} (TZ=${process.env.TZ || 'system'})`));

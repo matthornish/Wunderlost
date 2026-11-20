@@ -755,7 +755,10 @@ async function settingsModal() {
   $('#st-users', c)?.addEventListener('click', usersModal);
   $('#st-logout', c).onclick = async () => {
     try { await disablePush(true); } catch {}
-    await api('POST', '/auth/logout'); location.hash = ''; location.reload();
+    await api('POST', '/auth/logout');
+    // Forget this account's per-device state (last list, open/closed sections); keep the theme.
+    try { Object.keys(localStorage).filter((k) => k.startsWith('wl_') && k !== 'wl_theme').forEach((k) => localStorage.removeItem(k)); } catch {}
+    location.hash = ''; location.reload();
   };
 }
 function applyBackground() {
