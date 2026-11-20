@@ -28,7 +28,7 @@ Format: `type: short imperative summary` (lowercase, no period). Add a body when
 ## Deployment
 
 - When release-please creates a release, `.github/workflows/docker-publish.yml` builds the image and pushes it to `ghcr.io/matthornish/wunderlost` with tags `latest`, `X.Y.Z`, `X.Y`, and `X`. It can also be run by hand from the Actions tab for an existing tag.
-- Production runs on an Unraid server from that image, managed in the Unraid Docker tab (container runs as `99:100`, data in `/mnt/user/appdata/wunderlost`). Updates are applied there with Apply Update. Nothing is built on the server.
+- The owner's own deployment runs on an Unraid server from that image, managed in the Unraid Docker tab (container runs as `99:100`, data in `/mnt/user/appdata/wunderlost`). Updates are applied there with Apply Update. Nothing is built on the server.
 - The Dockerfile is the source of truth for the runtime image. Changes to it ship with the next release.
 
 ## Code guidelines
@@ -40,3 +40,7 @@ Format: `type: short imperative summary` (lowercase, no period). Add a body when
 - After any write to lists, tasks, subtasks or members, call `notifyList` / `notifyUsers` so other devices refresh.
 - Keep `package-lock.json` in sync with `package.json` (`npm install`, commit both).
 - The service worker cache version is injected by `server.js` at startup (`__CACHE_VERSION__` placeholder in `public/sw.js`), so every redeploy makes clients fetch fresh assets. Don't hardcode it. New files that should work offline go in `STATIC_ASSETS` in `public/sw.js`.
+
+## License
+
+AGPL-3.0-or-later (see `LICENSE`). New source files start with the two-line copyright/license header used in `server.js`. Keep third-party notices (Lucide ISC in `public/icons.svg`, Figtree OFL in `public/fonts/OFL.txt`) intact.

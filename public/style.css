@@ -1,3 +1,4 @@
+/* Wunderlost — Copyright (C) 2026 Matt Hornish. AGPL-3.0-or-later; see LICENSE. */
 /* Wunderlost — dark-first theme. Light mode overrides the same tokens. */
 
 @font-face {
@@ -317,6 +318,8 @@ input, select, textarea { font: inherit; color: inherit; }
 .color-picks button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--c, var(--text)); }
 .swatch.upload { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: var(--raise); border: 1.5px dashed var(--faint); color: var(--muted); font-size: 12px; font-weight: 600; }
 .swatch.upload:hover { color: var(--text); border-color: var(--accent); }
+.about { margin-top: 6px !important; line-height: 1.5; }
+.about a { color: var(--accent); font-weight: 600; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
 .toast {
   position: fixed; left: 50%; bottom: calc(24px + var(--safe-bot)); transform: translateX(-50%); background: var(--text); color: var(--ink);

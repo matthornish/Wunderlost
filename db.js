@@ -1,3 +1,4 @@
+// Wunderlost — Copyright (C) 2026 Matt Hornish. AGPL-3.0-or-later; see LICENSE.
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');

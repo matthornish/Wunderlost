@@ -1,3 +1,4 @@
+// Wunderlost — Copyright (C) 2026 Matt Hornish. AGPL-3.0-or-later; see LICENSE.
 // Wunderlost service worker: app-shell cache (network-first) + push notifications.
 // The cache version placeholder below is filled in by server.js at startup, so every redeploy busts the cache.
 const CACHE = 'wunderlost-__CACHE_VERSION__';

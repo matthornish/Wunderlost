@@ -1,4 +1,5 @@
 'use strict';
+// Wunderlost — Copyright (C) 2026 Matt Hornish. AGPL-3.0-or-later; see LICENSE.
 /* Wunderlost — Wunderlist-style client. Vanilla JS, no build step. */
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -107,6 +108,7 @@ async function boot() {
   applyBackground();
   let st;
   try { st = await api('GET', '/auth/status'); } catch (e) { $('#auth-err').textContent = e.message; showAuthForm('login', {}); return; }
+  S.about = { version: st.version, source: st.source };
   if (st.user) { S.me = st.user; startApp(); } else showAuthForm(st.setupNeeded ? 'setup' : 'login', st);
 }
 function showAuth() { $('#app').classList.add('hidden'); api('GET', '/auth/status').then((st) => showAuthForm('login', st)).catch(() => showAuthForm('login', {})); }
@@ -705,6 +707,7 @@ async function settingsModal() {
       <button class="btn">Change password</button></form>
     ${S.me.is_admin ? '<h4>Admin</h4><button class="btn" id="st-users">Manage users</button>' : ''}
     <p class="err" id="st-err"></p>
+    <p class="about small muted">Wunderlost ${esc(S.about?.version || '')} · Free software under the GNU AGPL v3, provided as-is with no warranty. <a href="${esc(S.about?.source || 'https://github.com/matthornish/Wunderlost')}" target="_blank" rel="noopener">Source code</a></p>
     <div class="actions"><button class="btn danger" id="st-logout">Sign out</button><button class="btn primary" id="st-close">Done</button></div>`);
   const err = $('#st-err', c);
   $('#st-close', c).onclick = closeModal;

@@ -1,3 +1,4 @@
+// Wunderlost — Copyright (C) 2026 Matt Hornish. AGPL-3.0-or-later; see LICENSE.
 // Date helpers. All "local" math uses the container's TZ (set TZ in docker-compose)
 // so recurring reminders keep the same wall-clock time across DST changes.
 

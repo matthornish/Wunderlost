@@ -7,8 +7,8 @@
     "start": "node server.js",
     "build:icons": "node scripts/build-icons.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Matt Hornish",
+  "license": "AGPL-3.0-or-later",
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.2.0",
@@ -19,5 +19,9 @@
   "devDependencies": {
     "@fontsource-variable/figtree": "^5.3.0",
     "lucide-static": "^1.76.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/matthornish/Wunderlost"
   }
 }

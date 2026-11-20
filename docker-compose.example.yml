@@ -1,0 +1,16 @@
+# Copy to docker-compose.yml, adjust, then: docker compose up -d
+services:
+  wunderlost:
+    image: ghcr.io/matthornish/wunderlost:latest
+    container_name: wunderlost
+    restart: unless-stopped
+    # user: "99:100"                      # Unraid: uncomment (nobody:users)
+    ports:
+      - "3000:3000"
+    environment:
+      - TZ=America/New_York               # "Today", overdue and repeats use this
+      - VAPID_SUBJECT=mailto:you@example.com  # a real address you own; Apple rejects fake ones
+      # - ALLOW_REGISTRATION=false        # first account is always allowed and becomes admin
+      # - SOURCE_URL=https://github.com/you/your-fork   # if you run a modified version (AGPL)
+    volumes:
+      - ./wunderlost-data:/data           # must be writable by the container user (1000:1000 by default)
