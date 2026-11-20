@@ -497,6 +497,13 @@ setInterval(() => reminderTick().catch((e) => console.error('reminder loop', e))
 setInterval(() => db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now()), 3600000);
 
 // ---------- static + errors ----------
+// Service worker with a per-startup cache version, so every redeploy makes clients fetch fresh assets.
+const CACHE_VERSION = `${require('./package.json').version}-${Date.now().toString(36)}`;
+const swSource = require('fs').readFileSync(path.join(__dirname, 'public', 'sw.js'), 'utf8').replace(/__CACHE_VERSION__/g, CACHE_VERSION);
+app.get('/sw.js', (req, res) => {
+  res.set({ 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+  res.send(swSource);
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, p) => { if (p.endsWith('sw.js') || p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
 }));

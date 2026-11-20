@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # npm packages (express, better-sqlite3, bcryptjs, web-push)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "fix"
+      include: "scope"
+    groups:
+      # Bundle routine minor/patch bumps into one PR; majors arrive separately for review
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker base image (node) - stay on the current Node major, take patch/minor image updates
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "fix"
+      include: "scope"
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions used in workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
