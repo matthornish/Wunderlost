@@ -16,30 +16,25 @@ Self-hosted, Wunderlist-style to-do app. One Docker container, one SQLite file. 
 
 ## Install on Unraid
 
-Copy this folder to the server, for example `/mnt/user/appdata/wunderlost-src`. Then run these from the Unraid terminal:
+The image is published to `ghcr.io/matthornish/wunderlost` by GitHub Actions on every release. Nothing is built on the server.
 
+1. Create the data folder (Unraid terminal):
 ```
 mkdir -p /mnt/user/appdata/wunderlost && chown 99:100 /mnt/user/appdata/wunderlost
 ```
-```
-cd /mnt/user/appdata/wunderlost-src && docker build -t wunderlost:latest .
-```
-
-**Option A: Compose Manager plugin.** Edit `docker-compose.yml` (TZ, VAPID_SUBJECT, port), then `docker compose up -d` from that folder.
-
-**Option B: plain docker run:**
-```
-docker run -d --name wunderlost --restart unless-stopped --user 99:100 -p 3000:3000 -e TZ=America/New_York -e VAPID_SUBJECT=mailto:you@yourdomain.com -v /mnt/user/appdata/wunderlost:/data wunderlost:latest
-```
-
-Open `http://<unraid-ip>:3000`, create your admin account, then point your reverse proxy at it.
+2. Docker tab → **Add Container**, Advanced View on:
+   - **Name:** `wunderlost`
+   - **Repository:** `ghcr.io/matthornish/wunderlost:latest`
+   - **Extra Parameters:** `--user 99:100`
+   - **WebUI:** `http://[IP]:[PORT:3000]`
+   - Add **Port**: container `3000`, host whatever's free (e.g. `3011`)
+   - Add **Path**: container `/data`, host `/mnt/user/appdata/wunderlost`
+   - Add **Variables**: `TZ` = `America/New_York`, `VAPID_SUBJECT` = `mailto:you@yourdomain.com`
+3. Apply. Open the WebUI, create your admin account, then point your reverse proxy at it.
 
 ## Updating
 
-```
-cd /mnt/user/appdata/wunderlost-src && docker build -t wunderlost:latest . && docker rm -f wunderlost
-```
-Then re-run the `docker run` line (or `docker compose up -d`). Your data lives in `/mnt/user/appdata/wunderlost` and survives rebuilds.
+Merge the release-please "Release PR" on GitHub. Once the `docker-publish` workflow finishes, the Docker tab shows an update for `wunderlost` → **Apply Update**. Your data in `/mnt/user/appdata/wunderlost` survives updates.
 
 ## Backup
 
@@ -67,4 +62,5 @@ Everything is in `/mnt/user/appdata/wunderlost` (`wunderlost.db` plus `-wal`/`-s
 ```
 npm install && npm start
 ```
+See `CLAUDE.md` for branch, commit-message and release conventions.
 Stack: Node 22, Express 5, better-sqlite3, web-push, plain HTML/CSS/JS front end (no build step).
