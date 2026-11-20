@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Wunderlost</title>
+  <meta name="theme-color" content="#2b88d9">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Wunderlost">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Auth -->
+  <div id="auth" class="auth hidden">
+    <form id="auth-form" class="auth-card" autocomplete="on">
+      <div class="brand"><img src="/icons/icon.svg" alt=""> Wunderlost</div>
+      <p id="auth-sub" class="muted"></p>
+      <input id="auth-user" name="username" placeholder="Username" autocomplete="username" autocapitalize="none" required>
+      <input id="auth-pass" name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button type="submit" class="btn primary" id="auth-btn">Sign in</button>
+      <button type="button" class="link" id="auth-toggle"></button>
+      <p id="auth-err" class="err"></p>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="side-top">
+        <button class="user-btn" id="user-btn" title="Settings"><span class="avatar" id="avatar"></span><span id="user-name"></span><span class="chev">▾</span></button>
+        <button class="icon-btn" id="search-btn" title="Search">⌕</button>
+      </div>
+      <div class="search-wrap hidden" id="search-wrap"><input id="search" placeholder="Search to-dos" autocomplete="off"></div>
+      <nav class="lists" id="smart-lists"></nav>
+      <nav class="lists user-lists" id="user-lists"></nav>
+      <button class="create-list" id="create-list">＋ Create list</button>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <main class="main" id="main">
+      <header class="main-head">
+        <button class="icon-btn menu-btn" id="menu-btn" title="Lists">☰</button>
+        <h1 id="list-title"></h1>
+        <div class="head-actions">
+          <button class="icon-btn" id="share-btn" title="Share list">👥</button>
+          <button class="icon-btn" id="list-menu-btn" title="List options">⋯</button>
+        </div>
+      </header>
+      <form class="add-task" id="add-form">
+        <span class="plus">＋</span>
+        <input id="add-input" placeholder="Add a to-do…" autocomplete="off" maxlength="500">
+        <button type="button" class="star-toggle" id="add-star" title="Star">☆</button>
+      </form>
+      <div class="task-scroll" id="task-scroll">
+        <ul class="tasks" id="tasks"></ul>
+        <button class="show-done hidden" id="show-done"></button>
+        <ul class="tasks done" id="done-tasks"></ul>
+        <div class="empty hidden" id="empty"></div>
+      </div>
+    </main>
+
+    <section class="detail" id="detail" aria-hidden="true">
+      <div class="detail-head">
+        <label class="check"><input type="checkbox" id="d-check"><span></span></label>
+        <textarea id="d-title" rows="1" maxlength="500"></textarea>
+        <button class="star" id="d-star">☆</button>
+      </div>
+      <div class="detail-body">
+        <div class="row"><span class="ico">📅</span><label>Due</label><input type="date" id="d-due"><button class="clear" data-clear="d-due">✕</button></div>
+        <div class="row"><span class="ico">⏰</span><label>Remind</label><input type="datetime-local" id="d-remind"><button class="clear" data-clear="d-remind">✕</button></div>
+        <div class="row"><span class="ico">🔁</span><label>Repeat</label>
+          <select id="d-repeat">
+            <option value="">Never</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option>
+            <option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option>
+          </select></div>
+        <div class="row" id="d-assign-row"><span class="ico">👤</span><label>Assign</label><select id="d-assign"></select></div>
+        <div class="row"><span class="ico">📋</span><label>List</label><select id="d-list"></select></div>
+        <h3>Subtasks</h3>
+        <ul class="subtasks" id="d-subs"></ul>
+        <form id="d-sub-form" class="sub-add"><span class="plus">＋</span><input id="d-sub-input" placeholder="Add a subtask" maxlength="500" autocomplete="off"></form>
+        <h3>Notes</h3>
+        <textarea id="d-notes" placeholder="Add a note…"></textarea>
+      </div>
+      <div class="detail-foot">
+        <button class="icon-btn" id="d-close" title="Close">→</button>
+        <span class="muted small" id="d-meta"></span>
+        <button class="icon-btn danger" id="d-delete" title="Delete">🗑</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal shell -->
+  <div class="modal hidden" id="modal"><div class="modal-card" id="modal-card"></div></div>
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
