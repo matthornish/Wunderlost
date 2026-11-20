@@ -323,6 +323,32 @@ input, select, textarea { font: inherit; color: inherit; }
 [data-theme="dark"] .toast button { color: #2b7be9; }
 .scrim { display: none; }
 
+/* ---------- long-press / right-click menu ---------- */
+.task, .list-item { -webkit-touch-callout: none; }
+.task.pressed, .list-item.pressed { transform: scale(0.985); background: var(--row-hover); }
+.ctx-layer { position: fixed; inset: 0; z-index: 150; }
+.ctx-menu {
+  position: fixed; min-width: 230px; max-width: min(320px, calc(100vw - 16px)); padding: 6px; display: grid; gap: 1px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.4);
+  animation: ctx-in 0.12s ease-out;
+}
+.ctx-menu button { display: flex; align-items: center; gap: 12px; border: 0; background: none; text-align: left; padding: 10px 12px; border-radius: var(--r-ctl); color: var(--text); }
+.ctx-menu button > span:not(.ctx-emoji) { flex: 1; }
+.ctx-menu button .ico { color: var(--muted); }
+.ctx-menu button:hover, .ctx-menu button:focus-visible { background: var(--raise); outline: none; }
+.ctx-menu button.danger, .ctx-menu button.danger .ico { color: var(--danger); }
+.ctx-menu .chev-r { transform: rotate(-90deg); }
+.ctx-title { padding: 8px 12px 6px; font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx-emoji { width: 20px; text-align: center; font-size: 17px; }
+.ctx-layer.sheet { background: var(--scrim); }
+.ctx-layer.sheet .ctx-menu {
+  left: 8px; right: 8px; bottom: calc(8px + var(--safe-bot)); max-width: none; max-height: 70vh; overflow-y: auto;
+  border-radius: 16px; padding: 8px; animation: sheet-in 0.18s ease-out;
+}
+.ctx-layer.sheet .ctx-menu button { padding: 14px 14px; font-size: 16px; }
+@keyframes ctx-in { from { opacity: 0; transform: scale(0.97); } }
+@keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
   .detail { position: fixed; right: 0; top: 0; bottom: 0; box-shadow: -8px 0 30px rgba(0, 0, 0, 0.3); }

@@ -879,4 +879,135 @@ async function maybeAskPush() {
   toast('Get reminder notifications on this device?', 'Enable', () => enablePush().catch(fail));
 }
 
+// ---------------- long-press / right-click menus ----------------
+// Long press (touch) or right-click (mouse) on a to-do or a list opens a menu.
+// Android fires `contextmenu` on long press; iOS doesn't, so a pointer timer covers it.
+const LONG_PRESS_MS = 480;
+let pressTimer = null, pressStart = null, suppressClickUntil = 0, menuOpenedAt = 0;
+
+function menuTargetFrom(el) {
+  const task = el.closest?.('.task');
+  if (task) return { kind: 'task', id: Number(task.dataset.id), el: task };
+  const item = el.closest?.('.list-item');
+  if (item?.dataset.key?.startsWith('list:')) return { kind: 'list', id: Number(item.dataset.key.slice(5)), el: item };
+  return null;
+}
+function openMenuFor(target, x, y) {
+  if (Date.now() - menuOpenedAt < 700) return; // contextmenu + timer can both fire
+  menuOpenedAt = Date.now();
+  const items = target.kind === 'task' ? taskMenuItems(target.id) : listMenuItems(target.id);
+  if (!items.length) return;
+  const title = target.kind === 'task' ? taskById(target.id)?.title : listById(target.id)?.name;
+  navigator.vibrate?.(12);
+  target.el.classList.add('pressed');
+  showMenu(items, x, y, () => target.el.classList.remove('pressed'), title);
+}
+
+document.addEventListener('contextmenu', (e) => {
+  const t = menuTargetFrom(e.target);
+  if (!t || e.target.closest('input, textarea')) return;
+  e.preventDefault();
+  clearTimeout(pressTimer);
+  if (pressStart) suppressClickUntil = Date.now() + 800; // touch long press: a click may follow on lift
+  openMenuFor(t, e.clientX, e.clientY);
+});
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse') return; // mouse uses right-click
+  const t = menuTargetFrom(e.target);
+  if (!t) return;
+  pressStart = { x: e.clientX, y: e.clientY };
+  clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => {
+    suppressClickUntil = Date.now() + 800;
+    openMenuFor(t, pressStart.x, pressStart.y);
+  }, LONG_PRESS_MS);
+}, { passive: true });
+document.addEventListener('pointermove', (e) => {
+  if (pressStart && Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > 10) clearTimeout(pressTimer);
+}, { passive: true });
+for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, () => {
+  clearTimeout(pressTimer); pressStart = null;
+  // The click (if any) follows pointerup immediately; don't keep eating taps after that.
+  if (suppressClickUntil > Date.now()) setTimeout(() => { suppressClickUntil = 0; }, 60);
+}, { passive: true });
+document.addEventListener('scroll', () => clearTimeout(pressTimer), { capture: true, passive: true });
+// Swallow the click that follows lifting a finger after a long press, so it neither
+// opens/toggles the item underneath nor hits the menu that just appeared under the finger.
+document.addEventListener('click', (e) => {
+  if (Date.now() < suppressClickUntil) { e.preventDefault(); e.stopPropagation(); suppressClickUntil = 0; }
+}, true);
+
+function taskMenuItems(id) {
+  const t = taskById(id);
+  if (!t) return [];
+  const today = localToday(), tomorrow = dateStr(new Date(Date.now() + 86400000));
+  const items = [
+    { icon: 'check', label: t.completed ? 'Mark as not done' : 'Mark as done', run: () => toggleTask(id) },
+    { icon: 'star', label: t.starred ? 'Unstar' : 'Star', run: () => updateTask(id, { starred: !t.starred }) },
+  ];
+  if (!t.completed) {
+    if (t.due_date !== today) items.push({ icon: 'calendar-check', label: 'Due today', run: () => updateTask(id, { due_date: today }) });
+    if (t.due_date !== tomorrow) items.push({ icon: 'calendar', label: 'Due tomorrow', run: () => updateTask(id, { due_date: tomorrow }) });
+    if (t.due_date) items.push({ icon: 'x', label: 'Remove due date', run: () => updateTask(id, { due_date: null }) });
+  }
+  if (S.lists.length > 1) items.push({ icon: 'folder-input', label: 'Move to…', sub: () => S.lists.filter((l) => l.id !== t.list_id).map((l) => ({
+    emoji: l.is_inbox ? '' : l.emoji, icon: l.is_inbox ? 'inbox' : 'list', label: l.is_inbox ? 'Inbox' : l.name,
+    run: async () => { await updateTask(id, { list_id: l.id }); toast(`Moved to ${l.is_inbox ? 'Inbox' : l.name}`); if (S.selected === id && S.view.type === 'list') closeDetail(); },
+  })) });
+  items.push({ icon: 'trash-2', label: 'Delete to-do', danger: true, run: () => confirmModal(`Delete "${t.title}"?`, 'This can’t be undone.', 'Delete', async () => {
+    await api('DELETE', `/tasks/${id}`);
+    S.tasks = S.tasks.filter((x) => x.id !== id);
+    if (S.selected === id) closeDetail();
+    renderTasks(); loadLists();
+  }) });
+  return items;
+}
+
+function listMenuItems(id) {
+  const l = listById(id);
+  if (!l || l.is_inbox) return [];
+  const owner = l.owner_id === S.me.id;
+  return [
+    { icon: 'pencil', label: 'Edit name, emoji and color', run: () => listModal(l) },
+    { icon: 'user-plus', label: 'Share list', run: () => shareModal(l.id) },
+    owner
+      ? { icon: 'trash-2', label: 'Delete list', danger: true, run: () => confirmModal(`Delete "${l.name}"?`, `All its to-dos will be deleted${l.members.length > 1 ? ' for everyone it’s shared with' : ''}.`, 'Delete', async () => { await api('DELETE', `/lists/${l.id}`); await loadLists(); if (S.view.type === 'list' && S.view.id === l.id) setView({ type: 'list', id: inbox().id }); }) }
+      : { icon: 'door-open', label: 'Leave list', danger: true, run: () => confirmModal(`Leave "${l.name}"?`, 'You’ll lose access until someone shares it again.', 'Leave', async () => { await api('DELETE', `/lists/${l.id}`); await loadLists(); if (S.view.type === 'list' && S.view.id === l.id) setView({ type: 'list', id: inbox().id }); }) },
+  ];
+}
+
+// Popover next to the pointer on wide screens, bottom sheet on phones.
+let menuEl = null, menuOnClose = null;
+function closeMenu() {
+  if (!menuEl) return;
+  menuEl.remove(); menuEl = null;
+  const cb = menuOnClose; menuOnClose = null; cb?.();
+}
+function showMenu(items, x, y, onClose, title = '') {
+  closeMenu();
+  menuOnClose = onClose;
+  const sheet = window.matchMedia('(max-width: 760px), (pointer: coarse)').matches;
+  menuEl = document.createElement('div');
+  menuEl.className = 'ctx-layer' + (sheet ? ' sheet' : '');
+  menuEl.innerHTML = `<div class="ctx-menu" role="menu"${title ? ` aria-label="${esc(title)}"` : ''}>${title ? `<div class="ctx-title">${esc(title)}</div>` : ''}${items.map((it, i) => `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.emoji ? `<span class="ctx-emoji">${esc(it.emoji)}</span>` : ic(it.icon)}<span>${esc(it.label)}</span>${it.sub ? ic('chevron-down', 'sm chev-r') : ''}</button>`).join('')}</div>`;
+  document.body.appendChild(menuEl);
+  const menu = menuEl.querySelector('.ctx-menu');
+  if (!sheet) {
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  }
+  menuEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-i]');
+    if (!b) return closeMenu(); // tapped outside
+    const it = items[Number(b.dataset.i)];
+    if (it.sub) { const keep = menuOnClose; menuOnClose = null; showMenu(it.sub(), x, y, keep, it.label.replace('…', '')); return; }
+    closeMenu();
+    Promise.resolve(it.run()).catch(fail);
+  });
+  menu.querySelector('button')?.focus({ preventScroll: true });
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menuEl) { e.stopImmediatePropagation(); closeMenu(); } }, true);
+window.addEventListener('resize', closeMenu);
+
 boot();
