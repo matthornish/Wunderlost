@@ -10,7 +10,7 @@ FROM node:22-bookworm-slim
 ENV NODE_ENV=production DATA_DIR=/data PORT=3000
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
-COPY package.json server.js db.js recur.js ./
+COPY package.json server.js db.js recur.js password.js ./
 COPY public ./public
 RUN mkdir -p /data && chown node:node /data
 USER node

@@ -84,6 +84,19 @@ addColumn('lists', 'color', "TEXT NOT NULL DEFAULT ''");
 addColumn('lists', 'emoji', "TEXT NOT NULL DEFAULT ''");
 addColumn('users', 'background', "TEXT NOT NULL DEFAULT 'scene:0'");
 
+// Sessions are stored as SHA-256 of the cookie token, so a leaked DB backup holds no live sessions.
+// One-time migration: hash any plaintext tokens left from before.
+if (!db.prepare("SELECT value FROM settings WHERE key = 'sessions_hashed'").get()) {
+  const crypto = require('crypto');
+  db.transaction(() => {
+    for (const r of db.prepare('SELECT token FROM sessions').all()) {
+      if (/^[0-9a-f]{64}$/.test(r.token)) continue;
+      db.prepare('UPDATE sessions SET token = ? WHERE token = ?').run(crypto.createHash('sha256').update(r.token).digest('hex'), r.token);
+    }
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('sessions_hashed', '1')").run();
+  })();
+}
+
 db.DATA_DIR = DATA_DIR;
 db.getSetting = (key) => db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;
 db.setSetting = (key, value) =>
