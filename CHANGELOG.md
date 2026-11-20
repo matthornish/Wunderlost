@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/matthornish/Wunderlost/compare/v1.1.0...v1.2.0) (2026-11-20)
+
+
+### Features
+
+* long-press menu for to-dos and lists ([#6](https://github.com/matthornish/Wunderlost/issues/6)) ([4253fce](https://github.com/matthornish/Wunderlost/commit/4253fceee13b3cd5793c1ef138a1dd3e91586aec))
+
 ## [1.1.0](https://github.com/matthornish/Wunderlost/compare/v1.0.1...v1.1.0) (2026-11-20)
 
 
