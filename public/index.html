@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Wunderlost</title>
-  <meta name="theme-color" content="#2b88d9">
+  <meta name="theme-color" content="#141a26">
+  <meta name="color-scheme" content="dark light">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -12,13 +13,23 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="preload" href="/fonts/figtree-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/style.css">
+  <script>
+    // Apply the theme before first paint so there's no light/dark flash.
+    (function () {
+      var t = 'auto';
+      try { t = JSON.parse(localStorage.getItem('wl_theme')) || 'auto'; } catch (e) {}
+      if (t === 'auto') t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+    })();
+  </script>
 </head>
 <body>
   <!-- Auth -->
   <div id="auth" class="auth hidden">
     <form id="auth-form" class="auth-card" autocomplete="on">
-      <div class="brand"><img src="/icons/icon.svg" alt=""> Wunderlost</div>
+      <div class="brand"><img src="/icons/icon.svg" alt=""><span>Wunderlost</span></div>
       <p id="auth-sub" class="muted"></p>
       <input id="auth-user" name="username" placeholder="Username" autocomplete="username" autocapitalize="none" required>
       <input id="auth-pass" name="password" type="password" placeholder="Password" autocomplete="current-password" required>
@@ -32,29 +43,33 @@
   <div id="app" class="app hidden">
     <aside id="sidebar" class="sidebar">
       <div class="side-top">
-        <button class="user-btn" id="user-btn" title="Settings"><span class="avatar" id="avatar"></span><span id="user-name"></span><span class="chev">▾</span></button>
-        <button class="icon-btn" id="search-btn" title="Search">⌕</button>
+        <button class="user-btn" id="user-btn" title="Settings"><span class="avatar" id="avatar"></span><span id="user-name"></span><svg class="ico sm"><use href="/icons.svg#chevron-down"/></svg></button>
+        <button class="icon-btn" id="search-btn" title="Search"><svg class="ico"><use href="/icons.svg#search"/></svg></button>
       </div>
-      <div class="search-wrap hidden" id="search-wrap"><input id="search" placeholder="Search to-dos" autocomplete="off"></div>
+      <div class="search-wrap hidden" id="search-wrap">
+        <svg class="ico sm"><use href="/icons.svg#search"/></svg>
+        <input id="search" placeholder="Search to-dos" autocomplete="off" enterkeyhint="search">
+      </div>
       <nav class="lists" id="smart-lists"></nav>
       <nav class="lists user-lists" id="user-lists"></nav>
-      <button class="create-list" id="create-list">＋ Create list</button>
+      <button class="create-list" id="create-list"><svg class="ico"><use href="/icons.svg#plus"/></svg>Create list</button>
     </aside>
     <div class="scrim" id="scrim"></div>
 
     <main class="main" id="main">
+      <div class="backdrop" id="backdrop"></div>
       <header class="main-head">
-        <button class="icon-btn menu-btn" id="menu-btn" title="Lists">☰</button>
+        <button class="icon-btn menu-btn" id="menu-btn" title="Lists"><svg class="ico"><use href="/icons.svg#menu"/></svg></button>
         <h1 id="list-title"></h1>
         <div class="head-actions">
-          <button class="icon-btn" id="share-btn" title="Share list">👥</button>
-          <button class="icon-btn" id="list-menu-btn" title="List options">⋯</button>
+          <button class="icon-btn" id="share-btn" title="Share list"><svg class="ico"><use href="/icons.svg#user-plus"/></svg></button>
+          <button class="icon-btn" id="list-menu-btn" title="List options"><svg class="ico"><use href="/icons.svg#ellipsis"/></svg></button>
         </div>
       </header>
       <form class="add-task" id="add-form">
-        <span class="plus">＋</span>
-        <input id="add-input" placeholder="Add a to-do…" autocomplete="off" maxlength="500">
-        <button type="button" class="star-toggle" id="add-star" title="Star">☆</button>
+        <svg class="ico plus"><use href="/icons.svg#plus"/></svg>
+        <input id="add-input" placeholder="Add a to-do" autocomplete="off" maxlength="500" enterkeyhint="done">
+        <button type="button" class="star-toggle" id="add-star" title="Star" aria-pressed="false"><svg class="ico"><use href="/icons.svg#star"/></svg></button>
       </form>
       <div class="task-scroll" id="task-scroll">
         <ul class="tasks" id="tasks"></ul>
@@ -66,37 +81,39 @@
 
     <section class="detail" id="detail" aria-hidden="true">
       <div class="detail-head">
-        <label class="check"><input type="checkbox" id="d-check"><span></span></label>
-        <textarea id="d-title" rows="1" maxlength="500"></textarea>
-        <button class="star" id="d-star">☆</button>
+        <label class="check"><input type="checkbox" id="d-check" aria-label="Complete"><span></span></label>
+        <textarea id="d-title" rows="1" maxlength="500" aria-label="Title"></textarea>
+        <button class="star-btn" id="d-star" title="Star" aria-pressed="false"><svg class="ico"><use href="/icons.svg#star"/></svg></button>
       </div>
       <div class="detail-body">
-        <div class="row"><span class="ico">📅</span><label>Due</label><input type="date" id="d-due"><button class="clear" data-clear="d-due">✕</button></div>
-        <div class="row"><span class="ico">⏰</span><label>Remind</label><input type="datetime-local" id="d-remind"><button class="clear" data-clear="d-remind">✕</button></div>
-        <div class="row"><span class="ico">🔁</span><label>Repeat</label>
-          <select id="d-repeat">
-            <option value="">Never</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option>
-            <option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option>
-          </select></div>
-        <div class="row" id="d-assign-row"><span class="ico">👤</span><label>Assign</label><select id="d-assign"></select></div>
-        <div class="row"><span class="ico">📋</span><label>List</label><select id="d-list"></select></div>
-        <h3>Subtasks</h3>
+        <div class="fields">
+          <div class="row"><svg class="ico"><use href="/icons.svg#calendar"/></svg><label for="d-due">Due</label><input type="date" id="d-due"><button class="clear" data-clear="d-due" title="Clear"><svg class="ico sm"><use href="/icons.svg#x"/></svg></button></div>
+          <div class="row"><svg class="ico"><use href="/icons.svg#bell"/></svg><label for="d-remind">Remind me</label><input type="datetime-local" id="d-remind"><button class="clear" data-clear="d-remind" title="Clear"><svg class="ico sm"><use href="/icons.svg#x"/></svg></button></div>
+          <div class="row"><svg class="ico"><use href="/icons.svg#repeat"/></svg><label for="d-repeat">Repeat</label>
+            <select id="d-repeat">
+              <option value="">Never</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option>
+              <option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option>
+            </select></div>
+          <div class="row" id="d-assign-row"><svg class="ico"><use href="/icons.svg#user-round"/></svg><label for="d-assign">Assigned to</label><select id="d-assign"></select></div>
+          <div class="row"><svg class="ico"><use href="/icons.svg#folder-input"/></svg><label for="d-list">List</label><select id="d-list"></select></div>
+        </div>
+        <h3><svg class="ico sm"><use href="/icons.svg#list-checks"/></svg>Subtasks</h3>
         <ul class="subtasks" id="d-subs"></ul>
-        <form id="d-sub-form" class="sub-add"><span class="plus">＋</span><input id="d-sub-input" placeholder="Add a subtask" maxlength="500" autocomplete="off"></form>
-        <h3>Notes</h3>
-        <textarea id="d-notes" placeholder="Add a note…"></textarea>
+        <form id="d-sub-form" class="sub-add"><svg class="ico sm"><use href="/icons.svg#plus"/></svg><input id="d-sub-input" placeholder="Add a subtask" maxlength="500" autocomplete="off" enterkeyhint="done"></form>
+        <h3><svg class="ico sm"><use href="/icons.svg#notebook-pen"/></svg>Notes</h3>
+        <textarea id="d-notes" placeholder="Add a note"></textarea>
       </div>
       <div class="detail-foot">
-        <button class="icon-btn" id="d-close" title="Close">→</button>
+        <button class="icon-btn" id="d-close" title="Close"><svg class="ico"><use href="/icons.svg#panel-right-close"/></svg></button>
         <span class="muted small" id="d-meta"></span>
-        <button class="icon-btn danger" id="d-delete" title="Delete">🗑</button>
+        <button class="icon-btn danger" id="d-delete" title="Delete to-do"><svg class="ico"><use href="/icons.svg#trash-2"/></svg></button>
       </div>
     </section>
   </div>
 
   <!-- Modal shell -->
-  <div class="modal hidden" id="modal"><div class="modal-card" id="modal-card"></div></div>
-  <div class="toast hidden" id="toast"></div>
+  <div class="modal hidden" id="modal"><div class="modal-card" id="modal-card" role="dialog" aria-modal="true"></div></div>
+  <div class="toast hidden" id="toast" role="status"></div>
 
   <script src="/app.js"></script>
 </body>

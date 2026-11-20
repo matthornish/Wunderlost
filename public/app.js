@@ -8,23 +8,25 @@ const ls = {
   set: (k, v) => { try { localStorage.setItem('wl_' + k, JSON.stringify(v)); } catch {} },
 };
 
+// Scene backgrounds behind the task list. Values are CSS backgrounds.
 const BACKGROUNDS = [
-  'linear-gradient(135deg, #3a7bd5 0%, #3a6073 100%)',
-  'linear-gradient(135deg, #8e5a3c 0%, #4b2e1f 100%)',
-  'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
-  'linear-gradient(135deg, #c94b4b 0%, #4b134f 100%)',
-  'linear-gradient(135deg, #2c3e50 0%, #4ca1af 100%)',
-  'linear-gradient(135deg, #614385 0%, #516395 100%)',
-  'linear-gradient(135deg, #f7971e 0%, #d35400 100%)',
-  'linear-gradient(135deg, #232526 0%, #414345 100%)',
+  { name: 'Deep sea', css: 'linear-gradient(160deg, #1e3c72 0%, #2a5298 45%, #0f2027 100%)' },
+  { name: 'Aurora', css: 'radial-gradient(120% 80% at 20% 10%, #1fa58f 0%, transparent 55%), radial-gradient(90% 70% at 85% 30%, #6a3fb5 0%, transparent 60%), linear-gradient(180deg, #0b1e2d, #0a1420)' },
+  { name: 'Ember', css: 'radial-gradient(110% 80% at 80% 0%, #f2994a 0%, transparent 55%), linear-gradient(165deg, #8e2e4a 0%, #3b1a3f 60%, #1b1028 100%)' },
+  { name: 'Pine', css: 'linear-gradient(170deg, #2f6a4f 0%, #1d4636 50%, #0e231c 100%)' },
+  { name: 'Dusk', css: 'linear-gradient(175deg, #ffb07c 0%, #c86b98 35%, #4b3b8f 70%, #1d1f4a 100%)' },
+  { name: 'Slate', css: 'linear-gradient(160deg, #3c4a5e 0%, #232c3b 100%)' },
+  { name: 'Walnut', css: 'linear-gradient(160deg, #8a5a3b 0%, #5a3622 55%, #2e1c12 100%)' },
+  { name: 'Graphite', css: 'linear-gradient(160deg, #2a2f38 0%, #16191f 100%)' },
 ];
+const ic = (name, cls = '') => `<svg class="ico ${cls}" aria-hidden="true"><use href="/icons.svg#${name}"/></svg>`;
 const REPEAT_LABEL = { daily: 'Daily', weekdays: 'Weekdays', weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', yearly: 'Yearly' };
 const SMART = {
-  assigned: { name: 'Assigned to me', ico: '👤' },
-  starred: { name: 'Starred', ico: '★' },
-  today: { name: 'Today', ico: '📅' },
-  week: { name: 'Week', ico: '🗓' },
-  search: { name: 'Search', ico: '⌕' },
+  assigned: { name: 'Assigned to me', ico: 'user' },
+  starred: { name: 'Starred', ico: 'star' },
+  today: { name: 'Today', ico: 'calendar-check' },
+  week: { name: 'Week', ico: 'calendar-days' },
+  search: { name: 'Search', ico: 'search' },
 };
 
 const S = {
@@ -96,6 +98,7 @@ function ding() {
 // ---------------- auth ----------------
 let authMode = 'login';
 async function boot() {
+  applyTheme();
   applyBackground();
   let st;
   try { st = await api('GET', '/auth/status'); } catch (e) { $('#auth-err').textContent = e.message; showAuthForm('login', {}); return; }
@@ -171,22 +174,22 @@ async function loadLists() {
 }
 function listButton({ key, ico, name, count, active, shared, attrs = '' }) {
   return `<button class="list-item${active ? ' active' : ''}" data-key="${esc(key)}" ${attrs}>
-    <span class="li-ico">${ico}</span><span class="li-name">${esc(name)}</span>
-    ${shared ? '<span class="li-shared" title="Shared">👥</span>' : ''}
+    <span class="li-ico">${ic(ico)}</span><span class="li-name">${esc(name)}</span>
+    ${shared ? `<span class="li-shared" title="Shared">${ic('users')}</span>` : ''}
     ${count ? `<span class="li-count">${count}</span>` : ''}</button>`;
 }
 function renderSidebar() {
   const v = S.view || {};
   const ib = inbox();
   const anyShared = S.lists.some((l) => l.members.length > 1);
-  let smart = ib ? listButton({ key: `list:${ib.id}`, ico: '📥', name: 'Inbox', count: ib.open_count, active: v.type === 'list' && v.id === ib.id, attrs: `data-drop="${ib.id}"` }) : '';
+  let smart = ib ? listButton({ key: `list:${ib.id}`, ico: 'inbox', name: 'Inbox', count: ib.open_count, active: v.type === 'list' && v.id === ib.id, attrs: `data-drop="${ib.id}"` }) : '';
   for (const k of ['assigned', 'starred', 'today', 'week']) {
     if (k === 'assigned' && !anyShared && !S.smart.assigned) continue;
     smart += listButton({ key: `smart:${k}`, ico: SMART[k].ico, name: SMART[k].name, count: S.smart[k] || 0, active: v.type === 'smart' && v.id === k });
   }
   $('#smart-lists').innerHTML = smart;
   $('#user-lists').innerHTML = S.lists.filter((l) => !l.is_inbox).map((l) => listButton({
-    key: `list:${l.id}`, ico: '☰', name: l.name, count: l.open_count, shared: l.members.length > 1,
+    key: `list:${l.id}`, ico: 'list', name: l.name, count: l.open_count, shared: l.members.length > 1,
     active: v.type === 'list' && v.id === l.id, attrs: `draggable="true" data-drop="${l.id}" data-lid="${l.id}"`,
   })).join('');
   document.title = (S.smart.today ? `(${S.smart.today}) ` : '') + 'Wunderlost';
@@ -290,8 +293,7 @@ function renderHeader() {
   const target = l ? (l.is_inbox ? 'Inbox' : l.name) : 'Inbox';
   $('#add-input').placeholder = `Add a to-do in "${target}"…`;
   S.addStar = v.id === 'starred';
-  $('#add-star').classList.toggle('on', S.addStar);
-  $('#add-star').textContent = S.addStar ? '★' : '☆';
+  $('#add-star').setAttribute('aria-pressed', S.addStar);
 }
 
 async function loadTasks() {
@@ -315,18 +317,18 @@ function taskRow(t) {
   if (t.due_date && !t.completed) {
     const today = localToday();
     const cls = t.due_date < today ? 'overdue' : t.due_date === today ? 'due-today' : '';
-    meta.push(`<span class="${cls}">📅 ${esc(dueLabel(t.due_date))}</span>`);
+    meta.push(`<span class="${cls}">${ic('calendar')}${esc(dueLabel(t.due_date))}</span>`);
   }
-  if (t.recurrence) meta.push(`<span title="${esc(REPEAT_LABEL[t.recurrence])}">🔁</span>`);
-  if (t.remind_at && !t.reminded && !t.completed) meta.push('<span title="Reminder set">⏰</span>');
-  if (t.subtasks.length) meta.push(`<span>☑ ${t.subtasks.filter((s) => s.completed).length}/${t.subtasks.length}</span>`);
-  if (t.notes) meta.push('<span title="Has notes">📝</span>');
-  if (t.assigned_name) meta.push(`<span>👤 ${esc(t.assigned_name)}</span>`);
+  if (t.recurrence) meta.push(`<span title="Repeats ${esc(REPEAT_LABEL[t.recurrence].toLowerCase())}">${ic('repeat')}</span>`);
+  if (t.remind_at && !t.reminded && !t.completed) meta.push(`<span title="Reminder set">${ic('bell')}</span>`);
+  if (t.subtasks.length) meta.push(`<span title="Subtasks done">${ic('list-checks')}${t.subtasks.filter((s) => s.completed).length}/${t.subtasks.length}</span>`);
+  if (t.notes) meta.push(`<span title="Has notes">${ic('notebook-pen')}</span>`);
+  if (t.assigned_name) meta.push(`<span>${ic('user-round')}${esc(t.assigned_name)}</span>`);
   const draggable = !t.completed && window.matchMedia('(pointer: fine)').matches;
   return `<li class="task${S.selected === t.id ? ' selected' : ''}" data-id="${t.id}" ${draggable ? 'draggable="true"' : ''}>
     <label class="check"><input type="checkbox" ${t.completed ? 'checked' : ''} data-act="toggle"><span></span></label>
     <div class="t-main"><div class="t-title">${esc(t.title)}</div><div class="t-meta">${meta.join('')}</div></div>
-    <button class="star${t.starred ? ' on' : ''}" data-act="star" title="Star">${t.starred ? '★' : '☆'}</button></li>`;
+    <button class="star-btn" data-act="star" title="${t.starred ? 'Unstar' : 'Star'}" aria-pressed="${!!t.starred}">${ic('star')}</button></li>`;
 }
 
 function renderTasks() {
@@ -341,7 +343,13 @@ function renderTasks() {
   $('#done-tasks').innerHTML = (isList || isSearch) && showDone ? done.map(taskRow).join('') : '';
   const empty = $('#empty');
   empty.classList.toggle('hidden', !!open.length || (showDone && done.length > 0));
-  empty.textContent = isSearch ? 'Nothing found.' : S.view.id === 'today' ? 'Nothing due today. 🎉' : 'No to-dos here. Add one above.';
+  const [head, sub] = isSearch ? ['No matches', 'Try fewer words, or check completed to-dos.']
+    : S.view.id === 'today' ? ['Nothing due today', 'Anything due today or overdue shows up here.']
+    : S.view.id === 'week' ? ['Nothing due this week', 'To-dos due in the next 7 days show up here.']
+    : S.view.id === 'starred' ? ['No starred to-dos', 'Star a to-do to pin it here.']
+    : S.view.id === 'assigned' ? ['Nothing assigned to you', 'To-dos assigned to you on shared lists show up here.']
+    : ['All done', 'Add a to-do above.'];
+  empty.innerHTML = `${esc(head)}<small>${esc(sub)}</small>`;
 }
 $('#show-done').onclick = () => {
   const k = `showDone:${S.view.id}`;
@@ -391,7 +399,7 @@ async function updateTask(id, patch) {
 }
 
 // add task
-$('#add-star').onclick = () => { S.addStar = !S.addStar; $('#add-star').classList.toggle('on', S.addStar); $('#add-star').textContent = S.addStar ? '★' : '☆'; $('#add-input').focus(); };
+$('#add-star').onclick = () => { S.addStar = !S.addStar; $('#add-star').setAttribute('aria-pressed', S.addStar); $('#add-input').focus(); };
 $('#add-form').onsubmit = async (e) => {
   e.preventDefault();
   const input = $('#add-input'), title = input.value.trim();
@@ -463,7 +471,7 @@ function renderDetail(force = false) {
   if (!t) return;
   $('#d-check').checked = !!t.completed;
   setField($('#d-title'), t.title, force); autosize($('#d-title'));
-  $('#d-star').classList.toggle('on', !!t.starred); $('#d-star').textContent = t.starred ? '★' : '☆';
+  $('#d-star').setAttribute('aria-pressed', !!t.starred);
   setField($('#d-due'), t.due_date || '', force);
   setField($('#d-remind'), isoToLocalInput(t.remind_at), force);
   setField($('#d-repeat'), t.recurrence || '', force);
@@ -477,7 +485,7 @@ function renderDetail(force = false) {
   $('#d-list').value = t.list_id;
   if (!$('#d-subs').contains(document.activeElement) || force) $('#d-subs').innerHTML = t.subtasks.map((s) => `<li data-sid="${s.id}" class="${s.completed ? 'done' : ''}">
     <label class="check"><input type="checkbox" ${s.completed ? 'checked' : ''}><span></span></label>
-    <input class="s-title" value="${esc(s.title)}" maxlength="500"><button class="s-del" title="Delete">✕</button></li>`).join('');
+    <input class="s-title" value="${esc(s.title)}" maxlength="500"><button class="s-del" title="Delete subtask">${ic('x', 'sm')}</button></li>`).join('');
   const created = new Date(t.created_at.replace(' ', 'T') + 'Z');
   $('#d-meta').textContent = t.completed && t.completed_at
     ? `Completed ${new Date(t.completed_at.replace(' ', 'T') + 'Z').toLocaleDateString()}`
@@ -580,9 +588,9 @@ $('#list-menu-btn').onclick = () => {
   const owner = l.owner_id === S.me.id;
   const done = S.tasks.filter((t) => t.completed).length;
   const c = openModal(`<h2>${esc(l.is_inbox ? 'Inbox' : l.name)}</h2><div class="menu-list">
-    ${l.is_inbox ? '' : '<button data-a="rename">✏️ Rename list</button><button data-a="share">👥 Share list</button>'}
-    ${done ? `<button data-a="clear">🧹 Delete ${done} completed to-do${done > 1 ? 's' : ''}</button>` : ''}
-    ${l.is_inbox ? '' : owner ? '<button data-a="delete" class="danger">🗑 Delete list</button>' : '<button data-a="leave" class="danger">🚪 Leave list</button>'}
+    ${l.is_inbox ? '' : `<button data-a="rename">${ic('pencil')}Rename list</button><button data-a="share">${ic('user-plus')}Share list</button>`}
+    ${done ? `<button data-a="clear">${ic('eraser')}Delete ${done} completed to-do${done > 1 ? 's' : ''}</button>` : ''}
+    ${l.is_inbox ? '' : owner ? `<button data-a="delete" class="danger">${ic('trash-2')}Delete list</button>` : `<button data-a="leave" class="danger">${ic('door-open')}Leave list</button>`}
     </div><div class="actions"><button class="btn" id="lm-close">Close</button></div>`);
   $('#lm-close', c).onclick = closeModal;
   c.querySelector('.menu-list').onclick = (e) => {
@@ -626,9 +634,10 @@ async function settingsModal() {
     <div class="toggle-row"><span id="st-push-label">${esc(pushState.label)}</span>
       ${pushState.can ? `<button class="btn ${pushState.on ? '' : 'primary'}" id="st-push">${pushState.on ? 'Disable' : 'Enable'}</button>` : ''}</div>
     ${pushState.on ? '<button class="link" id="st-test" style="justify-self:start">Send a test notification</button>' : ''}
-    <div class="toggle-row"><span>Completion sound</span><input type="checkbox" id="st-sound" style="width:auto" ${ls.get('sound', true) ? 'checked' : ''}></div>
-    <h4>Background</h4>
-    <div class="swatches">${BACKGROUNDS.map((b, i) => `<button class="swatch${i === bg ? ' on' : ''}" data-bg="${i}" style="background:${b}"></button>`).join('')}</div>
+    <label class="toggle-row"><span>Completion sound</span><input type="checkbox" id="st-sound" ${ls.get('sound', true) ? 'checked' : ''}></label>
+    <h4>Appearance</h4>
+    <div class="seg" role="group" aria-label="Theme">${[['auto', 'monitor', 'Auto'], ['dark', 'moon', 'Dark'], ['light', 'sun', 'Light']].map(([v, i, n]) => `<button data-theme-opt="${v}" aria-pressed="${ls.get('theme', 'auto') === v}">${ic(i, 'sm')}${n}</button>`).join('')}</div>
+    <div class="swatches">${BACKGROUNDS.map((b, i) => `<button class="swatch" data-bg="${i}" title="${esc(b.name)}" aria-label="${esc(b.name)} background" aria-pressed="${i === bg}" style="background:${b.css}"></button>`).join('')}</div>
     <h4>Password</h4>
     <form id="st-pw" style="display:grid;gap:8px"><input type="password" id="st-cur" placeholder="Current password" autocomplete="current-password" required>
       <input type="password" id="st-new" placeholder="New password (8+ chars)" autocomplete="new-password" minlength="8" required>
@@ -639,7 +648,14 @@ async function settingsModal() {
   const err = $('#st-err', c);
   $('#st-close', c).onclick = closeModal;
   $('#st-sound', c).onchange = (e) => ls.set('sound', e.target.checked);
-  c.querySelectorAll('[data-bg]').forEach((b) => b.onclick = () => { ls.set('bg', Number(b.dataset.bg)); applyBackground(); settingsModal(); });
+  c.querySelectorAll('[data-bg]').forEach((b) => b.onclick = () => {
+    ls.set('bg', Number(b.dataset.bg)); applyBackground();
+    c.querySelectorAll('[data-bg]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  });
+  c.querySelectorAll('[data-theme-opt]').forEach((b) => b.onclick = () => {
+    ls.set('theme', b.dataset.themeOpt); applyTheme();
+    c.querySelectorAll('[data-theme-opt]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  });
   $('#st-push', c)?.addEventListener('click', async () => {
     try { if (pushState.on) await disablePush(); else await enablePush(); settingsModal(); } catch (e) { err.textContent = e.message; }
   });
@@ -661,7 +677,18 @@ async function settingsModal() {
     await api('POST', '/auth/logout'); location.hash = ''; location.reload();
   };
 }
-function applyBackground() { document.body.style.setProperty('--bg', BACKGROUNDS[ls.get('bg', 0)] || BACKGROUNDS[0]); }
+function applyBackground() {
+  const b = BACKGROUNDS[ls.get('bg', 0)] || BACKGROUNDS[0];
+  document.documentElement.style.setProperty('--bg-scene', b.css);
+}
+const lightMQ = window.matchMedia('(prefers-color-scheme: light)');
+function applyTheme() {
+  const pref = ls.get('theme', 'auto');
+  const t = pref === 'auto' ? (lightMQ.matches ? 'light' : 'dark') : pref;
+  document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name="theme-color"]').content = t === 'light' ? '#f7f8fb' : '#141a26';
+}
+lightMQ.addEventListener?.('change', applyTheme);
 
 async function usersModal() {
   const users = await api('GET', '/users');
