@@ -528,6 +528,11 @@ app.put('/api/tasks/:id', auth, wrap((req, res) => {
   }
   if (sets.list_id && !('assigned_to' in sets) && t.assigned_to && !listMemberIds(listId).includes(t.assigned_to)) sets.assigned_to = null;
   if ('recurrence' in sets && sets.recurrence && !(sets.due_date ?? t.due_date)) sets.due_date = today();
+  // Remember the day of month the user picked, so monthly/yearly repeats don't drift after a short month.
+  if ('due_date' in sets || 'recurrence' in sets) {
+    const d = sets.due_date !== undefined ? sets.due_date : t.due_date;
+    sets.repeat_day = d ? Number(d.slice(8, 10)) : null;
+  }
   const keys = Object.keys(sets);
   if (keys.length) {
     db.prepare(`UPDATE tasks SET ${keys.map((k) => `${k} = @${k}`).join(', ')}, updated_at = datetime('now') WHERE id = @id`).run({ ...sets, id: t.id });

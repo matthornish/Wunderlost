@@ -87,6 +87,7 @@ addColumn('users', 'background', "TEXT NOT NULL DEFAULT 'scene:0'");
 // Sharing needs consent: an invited user isn't a member until they accept.
 addColumn('list_members', 'status', "TEXT NOT NULL DEFAULT 'active'");
 addColumn('list_members', 'invited_by', 'INTEGER');
+addColumn('tasks', 'repeat_day', 'INTEGER'); // day of month a monthly/yearly repeat returns to
 
 // Sessions are stored as SHA-256 of the cookie token, so a leaked DB backup holds no live sessions.
 // One-time migration: hash any plaintext tokens left from before.
