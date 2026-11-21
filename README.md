@@ -1,10 +1,18 @@
 # Wunderlost
 
-A self-hosted, Wunderlist-style to-do app. One Docker container, one SQLite file, installable on your phone.
+**Self-hosted to-do lists that feel like Wunderlist.** One Docker container, one SQLite file, an app on your phone.
 
-Built as a replacement for Microsoft To Do (which replaced Wunderlist, which Microsoft also shut down — hence the name). Not affiliated with Microsoft or Wunderlist.
+Microsoft bought Wunderlist and shut it down, replaced it with Microsoft To Do, and is now [retiring the To Do apps on June 30, 2027](https://support.microsoft.com/en-us/planner/to-do-to-planner). Hence the name. Not affiliated with Microsoft or Wunderlist.
 
-![Wunderlost on desktop, dark theme](docs/screenshots/desktop-dark.webp)
+![Adding, starring and completing to-dos, the long-press menu, and the detail pane](docs/screenshots/demo.gif)
+
+**Quick start**
+```
+mkdir -p wunderlost-data && sudo chown 1000:1000 wunderlost-data
+docker run -d --name wunderlost -p 3000:3000 -e TZ=America/New_York -e VAPID_SUBJECT=mailto:you@example.com -v ./wunderlost-data:/data ghcr.io/matthornish/wunderlost:latest
+docker logs wunderlost
+```
+Open port 3000 and enter the setup code from the log to create your admin account. For phones and push notifications, put it behind HTTPS. Full steps under [Install](#install).
 
 <p>
   <img src="docs/screenshots/phone-list.webp" width="30%" alt="A list on a phone">
@@ -33,6 +41,8 @@ Found a security problem? See [SECURITY.md](SECURITY.md).
 - Multi-user, with an admin who creates accounts
 
 ## Install
+
+![Wunderlost on desktop, dark theme](docs/screenshots/desktop-dark.webp)
 
 You need Docker and, for push notifications and installing on phones, an HTTPS reverse proxy (Caddy, Nginx Proxy Manager, Traefik, SWAG…) with a real certificate.
 
