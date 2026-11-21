@@ -23,8 +23,9 @@ function addDays(dateStr, n) {
   return toDateStr(d);
 }
 
-function addMonthsClamped(d, months) {
-  const day = d.getDate();
+// Move by whole months, landing on `day` (default: the current day) or the month's last day
+// if it's shorter. Keeping the original day stops a "31st" repeat drifting to the 28th forever.
+function addMonthsClamped(d, months, day = d.getDate()) {
   d.setDate(1);
   d.setMonth(d.getMonth() + months);
   const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
@@ -33,7 +34,7 @@ function addMonthsClamped(d, months) {
 }
 
 // Advance a Date object (mutates a copy) by one recurrence step, using local time.
-function step(date, rule) {
+function step(date, rule, anchorDay) {
   const d = new Date(date.getTime());
   switch (rule) {
     case 'daily': d.setDate(d.getDate() + 1); break;
@@ -42,8 +43,8 @@ function step(date, rule) {
       break;
     case 'weekly': d.setDate(d.getDate() + 7); break;
     case 'biweekly': d.setDate(d.getDate() + 14); break;
-    case 'monthly': addMonthsClamped(d, 1); break;
-    case 'yearly': addMonthsClamped(d, 12); break;
+    case 'monthly': addMonthsClamped(d, 1, anchorDay); break;
+    case 'yearly': addMonthsClamped(d, 12, anchorDay); break;
     default: throw new Error('bad rule');
   }
   return d;
@@ -56,10 +57,19 @@ function nextOccurrence(task) {
   const rule = task.recurrence;
   const t = today();
   let due = task.due_date || t;
+  // Fast-forward day-based repeats that are far overdue so the loop below stays short.
+  const DAYS = { daily: 1, weekly: 7, biweekly: 14 };
+  if (DAYS[rule] && due < t && !task.remind_at) {
+    const behind = Math.floor((parseDateStr(t) - parseDateStr(due)) / 86400000);
+    due = addDays(due, behind - (behind % DAYS[rule]));
+  }
+  // Day of month the repeat is anchored to (stored when the user sets the date), so
+  // monthly/yearly repeats return to the 29th–31st after a shorter month.
+  const anchorDay = task.repeat_day || parseDateStr(task.due_date || t).getDate();
   let remind = task.remind_at ? new Date(task.remind_at) : null;
   let guard = 0;
   do {
-    const nextDue = toDateStr(step(parseDateStr(due), rule));
+    const nextDue = toDateStr(step(parseDateStr(due), rule, anchorDay));
     if (remind) {
       // shift reminder by the same number of calendar days as the due date moved
       const diffDays = Math.round((parseDateStr(nextDue) - parseDateStr(due)) / 86400000);
@@ -68,8 +78,8 @@ function nextOccurrence(task) {
       remind = r;
     }
     due = nextDue;
-  } while (due <= t && ++guard < 1000);
+  } while (due <= t && ++guard < 100000); // ~270 years of daily steps
   return { due_date: due, remind_at: remind ? remind.toISOString() : null };
 }
 
-module.exports = { RULES, today, addDays, nextOccurrence, toDateStr };
+module.exports = { RULES, today, addDays, nextOccurrence, toDateStr, parseDateStr };
