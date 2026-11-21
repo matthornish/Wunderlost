@@ -112,6 +112,7 @@ Everything lives in the data folder: `wunderlost.db` (plus `-wal`/`-shm` files) 
 
 ```
 npm install && npm start
+npm test
 ```
 
 Node 22, Express 5, better-sqlite3, web-push; plain HTML/CSS/JS front end with no build step. `npm run build:icons` regenerates the icon sprite. See [CLAUDE.md](CLAUDE.md) for branch, commit-message and release conventions (Conventional Commits; releases by release-please; images published to GHCR).

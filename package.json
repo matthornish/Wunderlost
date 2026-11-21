@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build:icons": "node scripts/build-icons.js"
+    "build:icons": "node scripts/build-icons.js",
+    "test": "TZ=America/New_York node --test"
   },
   "author": "Matt Hornish",
   "license": "AGPL-3.0-or-later",

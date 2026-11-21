@@ -33,7 +33,8 @@ Format: `type: short imperative summary` (lowercase, no period). Add a body when
 
 ## Code guidelines
 
-- No test suite exists yet. Describe in the PR how a change was verified.
+- Tests: `npm test` (Node's built-in `node:test`, no extra dependencies). `test/api.test.js` starts a real server on a free port with a throwaway database and drives the API like a browser; `test/helpers.js` has `startServer()` and `client()`. Unit tests sit next to it (e.g. `test/recur.test.js`). The **Tests** workflow runs them on every PR; don't merge red.
+- Every fix gets a test that fails without it. New API routes get tests for the happy path and for the access checks (another user → 404, non-owner → 403). Still describe in the PR how the change was verified beyond the tests (e.g. browser check for UI work).
 - Every `/api` route that touches a list, task or subtask must go through `requireMember` / `requireTask` / `requireSub` so users can only reach lists they belong to. Never trust client-sent IDs.
 - Preserve the existing hardening: mutating API calls must be `application/json` (CSRF guard); sign-in limits per IP and per username; scrypt password hashing in `password.js` (async, concurrency-capped; legacy bcrypt only verified, then upgraded); session tokens stored as SHA-256; HttpOnly + SameSite session cookies; first-run setup code; `trust proxy` limited to private networks (`TRUST_PROXY`); input length limits via `str()`.
 - Push endpoints must pass `validPushEndpoint` (known push services only) — never send to user-supplied URLs.
