@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/matthornish/Wunderlost/compare/v1.3.0...v1.3.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* keep repeating to-dos on the right date ([#18](https://github.com/matthornish/Wunderlost/issues/18)) ([9304c3b](https://github.com/matthornish/Wunderlost/commit/9304c3b3d3c72bc38792785000102be8011089a9))
+
 ## [1.3.0](https://github.com/matthornish/Wunderlost/compare/v1.2.1...v1.3.0) (2026-11-20)
 
 
